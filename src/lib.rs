@@ -15,22 +15,26 @@ mod blob;
 use std::os::unix::net::UnixStream;
 use std::net::TcpStream;
 use std::io::prelude::*;
+use std::sync::*;
+use std::ops::DerefMut;
+use std::cell::{RefCell, RefMut};
 use oh_my_rust::*;
 
-pub trait AsRedis<'a, T, S: std::ops::DerefMut<Target=T>>
-    where for <'b> &'b T: Read + Write
+// TODO: return Result instead?
+pub trait AsRedis<'a, T, S>
+    where for <'b> &'b T: Read + Write, S: DerefMut<Target=T>
 {
     fn as_redis(&'a self) -> Session<T, S>;
 }
 
-impl<'a> AsRedis<'a, UnixStream, std::cell::RefMut<'a, UnixStream>> for std::cell::RefCell<UnixStream> {
-    fn as_redis(&'a self) -> Session<UnixStream, std::cell::RefMut<'a, UnixStream>> {
+impl<'a> AsRedis<'a, UnixStream, std::cell::RefMut<'a, UnixStream>> for RefCell<UnixStream> {
+    fn as_redis(&'a self) -> Session<UnixStream, RefMut<'a, UnixStream>> {
         Session::new(self.borrow_mut())
     }
 }
 
-impl<'a> AsRedis<'a, TcpStream, std::cell::RefMut<'a, TcpStream>> for std::cell::RefCell<TcpStream> {
-    fn as_redis(&'a self) -> Session<TcpStream, std::cell::RefMut<'a, TcpStream>> {
+impl<'a> AsRedis<'a, TcpStream, RefMut<'a, TcpStream>> for RefCell<TcpStream> {
+    fn as_redis(&'a self) -> Session<TcpStream, RefMut<'a, TcpStream>> {
         Session::new(self.borrow_mut())
     }
 }
@@ -50,7 +54,7 @@ impl<'a, T: std::net::ToSocketAddrs + ?Sized> AsRedis<'a, TcpStream, Box<TcpStre
     }
 }
 
-pub struct Session<T, S: std::ops::DerefMut<Target=T>>
+pub struct Session<T, S: DerefMut<Target=T>>
     where for <'a> &'a T: Read + Write, T: ?Sized
 {
     count: u32,
@@ -58,7 +62,7 @@ pub struct Session<T, S: std::ops::DerefMut<Target=T>>
     conn: Option<S>
 }
 
-impl<T: Read + Write, S: std::ops::DerefMut<Target=T>> Session<T, S>
+impl<T: Read + Write, S: DerefMut<Target=T>> Session<T, S>
     where for <'a> &'a T: Read + Write
 {
     pub fn new(conn: S) -> Self {
