@@ -6,12 +6,9 @@
 #![allow(clippy::write_with_newline)]
 
 // AsRedis: primary API. Anything that can initiate a valid redis session. Typically RefCell<UnixStream> and the clients. A AsRedis may fail if it is already in use, or pending if it needs to wait before makeing a new connection.
-// Client: a factory of connections, contains uri, password, db numbers, and all other things required to establish a connection to Redis. Immutable.
-// Command: a transilent command builder buffer. Hold a reference to a connection.
+// Command: a transilent command builder buffer. Hold a unique reference to the connection (be it shared or not).
 // Collection: a collection represents the data behind a redis key.
 // Response: an enum of possible non-error return types from Redis.
-
-// mutability: we temporarily ignore the mutability issue, and just let things mess if the user give a single connection to different collections and use them concurrently.
 
 mod blob;
 
@@ -20,36 +17,51 @@ use std::net::TcpStream;
 use std::io::prelude::*;
 use oh_my_rust::*;
 
-pub trait AsRedis<'a, T: Read + Write> {
-    fn as_redis(&'a self) -> Session<T>;
+pub trait AsRedis<'a, T, S: std::ops::DerefMut<Target=T>>
+    where for <'b> &'b T: Read + Write
+{
+    fn as_redis(&'a self) -> Session<T, S>;
 }
 
-// impl<'a> AsRedis<'a, &'a mut UnixStream> for &mut UnixStream {
-//     fn as_redis(&'a self) -> Session<&'a mut UnixStream> {
-//         Session::new(&mut self)
-//     }
-// }
-
-// impl AsRedis<&mut TcpStream> for &mut TcpStream {
-//     fn as_redis(&self) -> Session<&mut TcpStream> {
-//         Session::new(&mut *self)
-//     }
-// }
-
-impl<'a> AsRedis<'a, &'a TcpStream> for TcpStream {
-    fn as_redis(&'a self) -> Session<&'a TcpStream> {
-        Session::new(self)
+impl<'a> AsRedis<'a, UnixStream, std::cell::RefMut<'a, UnixStream>> for std::cell::RefCell<UnixStream> {
+    fn as_redis(&'a self) -> Session<UnixStream, std::cell::RefMut<'a, UnixStream>> {
+        Session::new(self.borrow_mut())
     }
 }
 
-pub struct Session<T: Read + Write> {
-    count: u32,
-    buf: Vec<u8>,
-    conn: Option<T>
+impl<'a> AsRedis<'a, TcpStream, std::cell::RefMut<'a, TcpStream>> for std::cell::RefCell<TcpStream> {
+    fn as_redis(&'a self) -> Session<TcpStream, std::cell::RefMut<'a, TcpStream>> {
+        Session::new(self.borrow_mut())
+    }
 }
 
-impl<T: Read + Write> Session<T> {
-    pub fn new(conn: T) -> Self {
+// for convenience before we design and impl the various auto-managing clients and pools
+impl<'a, T: AsRef<std::path::Path> + ?Sized> AsRedis<'a, UnixStream, Box<UnixStream>> for T {
+    fn as_redis(&'a self) -> Session<UnixStream, Box<UnixStream>> {
+        let conn = UnixStream::connect(self).expect("cannot connect to redis");
+        Session::new(Box::new(conn))
+    }
+}
+
+impl<'a, T: std::net::ToSocketAddrs + ?Sized> AsRedis<'a, TcpStream, Box<TcpStream>> for T {
+    fn as_redis(&'a self) -> Session<TcpStream, Box<TcpStream>> {
+        let conn = TcpStream::connect(self).expect("cannot connect to redis");
+        Session::new(Box::new(conn))
+    }
+}
+
+pub struct Session<T, S: std::ops::DerefMut<Target=T>>
+    where for <'a> &'a T: Read + Write, T: ?Sized
+{
+    count: u32,
+    buf: Vec<u8>,
+    conn: Option<S>
+}
+
+impl<T: Read + Write, S: std::ops::DerefMut<Target=T>> Session<T, S>
+    where for <'a> &'a T: Read + Write
+{
+    pub fn new(conn: S) -> Self {
         Session { count: 0, buf: vec![], conn: Some(conn) }
     }
 
@@ -71,12 +83,12 @@ impl<T: Read + Write> Session<T> {
         self.buf.clear();
 
         // recv
-        let mut reader = std::io::BufReader::new(conn);
+        let mut reader = std::io::BufReader::new(&*conn);
         let res = parse_resp(&mut reader);
         if !reader.buffer().is_empty() {
             return Err("buffer not empty after read.".to_string())
         }
-        self.conn = Some(reader.into_inner());
+        self.conn = Some(conn);
 
         res
     }

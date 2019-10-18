@@ -2,8 +2,7 @@ use redis_alchemy::*;
 
 #[test]
 fn test_1() {
-    let conn = std::net::TcpStream::connect("127.0.0.1:6379").expect("cannot connect to redis");
-    let res = conn.as_redis()
+    let res = AsRedis::<std::net::TcpStream, _>::as_redis("127.0.0.1:6379")
         .arg(b"set")
         .arg(b"fuck")
         .arg(b"1")
@@ -13,16 +12,15 @@ fn test_1() {
 
 #[test]
 fn test_2() {
-    let conn = std::net::TcpStream::connect("127.0.0.1:6379").expect("cannot connect to redis");
+    let mut conn = AsRedis::<std::net::TcpStream, _>::as_redis("127.0.0.1:6379");
     for i in 0..5 {
-        conn.as_redis()
-            .arg(b"rpush")
+        conn.arg(b"rpush")
             .arg(b"fucks")
             .arg(i.to_string().as_bytes())
             .fetch().unwrap();
     }
 
-    let list: Vec<_> = conn.as_redis()
+    let list: Vec<_> = conn
         .arg(b"lrange")
         .arg(b"fucks")
         .arg(b"0")
