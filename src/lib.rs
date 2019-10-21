@@ -6,11 +6,12 @@
 #![allow(clippy::write_with_newline)]
 
 // AsRedis: primary API. Anything that can initiate a valid redis session. Typically RefCell<UnixStream> and the clients. A AsRedis may fail if it is already in use, or pending if it needs to wait before makeing a new connection.
-// Command: a transilent command builder buffer. Hold a unique reference to the connection (be it shared or not).
+// Command: a plain command builder buffer.
 // Collection: a collection represents the data behind a redis key.
 // Response: an enum of possible non-error return types from Redis.
 
 mod blob;
+pub use blob::Blob;
 
 use std::os::unix::net::UnixStream;
 use std::net::TcpStream;
@@ -18,20 +19,21 @@ use std::io::prelude::*;
 use std::sync::*;
 use std::ops::DerefMut;
 use std::cell::{RefCell, RefMut};
+use detached_bufreader::BufReader;
 use oh_my_rust::*;
 
-// TODO: return Result instead?
-pub trait AsRedis<'a, T, S>
-    where for <'b> &'b T: Read + Write, S: DerefMut<Target=T> + 'a
-{
-    fn as_redis(&self) -> Session<T, S>;
+// TODO: return a result instead?
+pub trait AsRedis<'p, T: Read + Write> {
+    type P: std::ops::DerefMut<Target=T> + 'p;
+    fn as_redis(&'p self) -> Self::P;
 }
 
-// impl<'a> AsRedis<'a, UnixStream, RefMut<'_, UnixStream>> for RefCell<UnixStream> + 'a {
-//     fn as_redis(&self) -> Session<'a, UnixStream, RefMut<'_, UnixStream>> {
-//         Session::new(self.borrow_mut())
-//     }
-// }
+impl<'t> AsRedis<'t, UnixStream> for RefCell<UnixStream> {
+    type P = RefMut<'t, UnixStream>;
+    fn as_redis(&'t self) -> Self::P {
+        self.borrow_mut()
+    }
+}
 
 // impl AsRedis<TcpStream, RefMut<'_, TcpStream>> for RefCell<TcpStream> {
 //     fn as_redis(&self) -> Session<TcpStream, RefMut<'_, TcpStream>> {
@@ -40,33 +42,30 @@ pub trait AsRedis<'a, T, S>
 // }
 
 // for convenience before we design and impl the various auto-managing clients and pools
-impl<T: AsRef<std::path::Path> + ?Sized> AsRedis<'static, UnixStream, Box<UnixStream>> for T {
-    fn as_redis(&self) -> Session<UnixStream, Box<UnixStream>> {
-        let conn = UnixStream::connect(self).expect("cannot connect to redis");
-        Session::new(Box::new(conn))
-    }
-}
+// impl<T: AsRef<std::path::Path> + ?Sized> AsRedis<'static, UnixStream, Box<UnixStream>> for T {
+//     fn as_redis(&self) -> Session<UnixStream, Box<UnixStream>> {
+//         let conn = UnixStream::connect(self).expect("cannot connect to redis");
+//         Session::new(Box::new(conn))
+//     }
+// }
 
-impl<T: std::net::ToSocketAddrs + ?Sized> AsRedis<'static, TcpStream, Box<TcpStream>> for T {
-    fn as_redis(&self) -> Session<TcpStream, Box<TcpStream>> {
-        let conn = TcpStream::connect(self).expect("cannot connect to redis");
-        Session::new(Box::new(conn))
-    }
-}
+// impl<T: std::net::ToSocketAddrs + ?Sized> AsRedis<'static, TcpStream, Box<TcpStream>> for T {
+//     fn as_redis(&self) -> Session<TcpStream, Box<TcpStream>> {
+//         let conn = TcpStream::connect(self).expect("cannot connect to redis");
+//         Session::new(Box::new(conn))
+//     }
+// }
 
-pub struct Session<'a, T, S: DerefMut<Target=T> + 'a>
-    where for <'b> &'b T: Read + Write, T: ?Sized
-{
-    count: u32,
+pub struct Session<'s: 'a, 'a, A: AsRedis<'a, T>, T: Read + Write> {
+    count: usize,
     buf: Vec<u8>,
-    conn: Option<S>,
-    fuck: std::marker::PhantomData<&'a ()>
+    conn: Option<&'s A>,
+    fuck: std::marker::PhantomData<&'a T>
 }
 
-impl<'a, T, S: DerefMut<Target=T> + 'a> Session<'a, T, S>
-    where for <'b> &'b T: Read + Write
-{
-    pub fn new(conn: S) -> Self {
+// The additional requirements for T is from the fact that BufReader takes the ownership. Luckly both TcpStream and UnixStream meet the requirement, so it brings no actual problem for now.
+impl<'s, 'a, A: AsRedis<'a, T>, T: Read + Write> Session<'s, 'a, A, T> {
+    pub fn new(conn: &'s A) -> Self {
         Session { count: 0, buf: vec![], conn: Some(conn), fuck: std::marker::PhantomData }
     }
 
@@ -83,11 +82,12 @@ impl<'a, T, S: DerefMut<Target=T> + 'a> Session<'a, T, S>
         let conn = self.conn.take().expect("bug");
 
         // send
-        write!(&*conn, "*{}\r\n", self.count).map_err(|_| "failed writing to socket")?;
-        (&*conn).write_all(&self.buf).map_err(|_| "failed writing to socket")?;
-        
+        write!(conn.as_redis(), "*{}\r\n", self.count).map_err(|_| "failed writing to socket")?;
+        conn.as_redis().write_all(&self.buf).map_err(|_| "failed writing to socket")?;
+
         // recv
-        let mut reader = std::io::BufReader::new(&*conn);
+        let mut xu = conn.as_redis();
+        let mut reader = BufReader::new(&mut *xu);
         let res = parse_resp(&mut reader);
         if !reader.buffer().is_empty() {
             return Err("buffer not empty after read.".to_string())

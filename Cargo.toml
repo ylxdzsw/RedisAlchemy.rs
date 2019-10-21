@@ -6,3 +6,4 @@ edition = "2018"
 
 [dependencies]
 oh-my-rust = { path = "/home/ylxdzsw/fuck-projects/oh-my-rust" }
+detached-bufreader = { path = "/home/ylxdzsw/fuck-projects/detached-bufreader" }
