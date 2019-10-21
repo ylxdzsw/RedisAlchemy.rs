@@ -11,7 +11,7 @@
 // Response: an enum of possible non-error return types from Redis.
 
 mod blob;
-pub use blob::Blob;
+pub use blob::*;
 
 use std::os::unix::net::UnixStream;
 use std::net::TcpStream;
@@ -23,31 +23,43 @@ use detached_bufreader::BufReader;
 use oh_my_rust::*;
 
 // TODO: return a result instead?
-pub trait AsRedis<'p, T: Read + Write> {
-    type P: std::ops::DerefMut<Target=T> + 'p;
-    fn as_redis(&'p self) -> Self::P;
+pub trait AsRedis<'a> {
+    type T: Read + Write;
+    type P: std::ops::DerefMut<Target=Self::T> + 'a;
+    fn as_redis(&'a self) -> Self::P;
 }
 
-impl<'t> AsRedis<'t, UnixStream> for RefCell<UnixStream> {
-    type P = RefMut<'t, UnixStream>;
-    fn as_redis(&'t self) -> Self::P {
+impl<'a> AsRedis<'a> for RefCell<UnixStream> {
+    type T = UnixStream;
+    type P = RefMut<'a, UnixStream>;
+    fn as_redis(&'a self) -> Self::P {
         self.borrow_mut()
     }
 }
 
-// impl AsRedis<TcpStream, RefMut<'_, TcpStream>> for RefCell<TcpStream> {
-//     fn as_redis(&self) -> Session<TcpStream, RefMut<'_, TcpStream>> {
-//         Session::new(self.borrow_mut())
-//     }
-// }
+impl<'a, 'b: 'a> AsRedis<'a> for RefCell<&'b UnixStream> {
+    type T = &'b UnixStream;
+    type P = RefMut<'a, &'b UnixStream>;
+    fn as_redis(&'a self) -> Self::P {
+        self.borrow_mut()
+    }
+}
 
-// for convenience before we design and impl the various auto-managing clients and pools
-// impl<T: AsRef<std::path::Path> + ?Sized> AsRedis<'static, UnixStream, Box<UnixStream>> for T {
-//     fn as_redis(&self) -> Session<UnixStream, Box<UnixStream>> {
-//         let conn = UnixStream::connect(self).expect("cannot connect to redis");
-//         Session::new(Box::new(conn))
-//     }
-// }
+impl<'a> AsRedis<'a> for RefCell<TcpStream> {
+    type T = TcpStream;
+    type P = RefMut<'a, TcpStream>;
+    fn as_redis(&'a self) -> Self::P {
+        self.borrow_mut()
+    }
+}
+
+impl<'a, 'b: 'a> AsRedis<'a> for RefCell<&'b TcpStream> {
+    type T = &'b TcpStream;
+    type P = RefMut<'a, &'b TcpStream>;
+    fn as_redis(&'a self) -> Self::P {
+        self.borrow_mut()
+    }
+}
 
 // impl<T: std::net::ToSocketAddrs + ?Sized> AsRedis<'static, TcpStream, Box<TcpStream>> for T {
 //     fn as_redis(&self) -> Session<TcpStream, Box<TcpStream>> {
@@ -56,16 +68,16 @@ impl<'t> AsRedis<'t, UnixStream> for RefCell<UnixStream> {
 //     }
 // }
 
-pub struct Session<'s: 'a, 'a, A: AsRedis<'a, T>, T: Read + Write> {
+pub struct Session<'a, A: AsRedis<'a>> {
     count: usize,
     buf: Vec<u8>,
-    conn: Option<&'s A>,
-    fuck: std::marker::PhantomData<&'a T>
+    conn: Option<&'a A>,
+    fuck: std::marker::PhantomData<&'a ()>
 }
 
 // The additional requirements for T is from the fact that BufReader takes the ownership. Luckly both TcpStream and UnixStream meet the requirement, so it brings no actual problem for now.
-impl<'s, 'a, A: AsRedis<'a, T>, T: Read + Write> Session<'s, 'a, A, T> {
-    pub fn new(conn: &'s A) -> Self {
+impl<'a, A: AsRedis<'a>> Session<'a, A> {
+    pub fn new(conn: &'a A) -> Self {
         Session { count: 0, buf: vec![], conn: Some(conn), fuck: std::marker::PhantomData }
     }
 

@@ -37,7 +37,8 @@ use redis_alchemy::*;
 
 #[test]
 fn test_3() {
-    let client = std::cell::RefCell::new(std::os::unix::net::UnixStream::connect("/run/sayuri/redis/redis.sock").unwrap());
+    let sock = std::os::unix::net::UnixStream::connect("/run/sayuri/redis/redis.sock").unwrap();
+    let client = std::cell::RefCell::new(&sock);
     let mut blob = Blob::new(client, &b"fuck"[..]);
     blob.set(b"yes");
 }
