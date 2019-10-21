@@ -41,6 +41,7 @@ fn test_3() {
     let client = std::cell::RefCell::new(&sock);
     let mut blob = Blob::new(client, &b"fuck"[..]);
     blob.set(b"yes");
+    assert_eq!(&blob.get()[..], &b"yes"[..])
 }
 
 #[test]

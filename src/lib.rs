@@ -24,16 +24,16 @@ use detached_bufreader::BufReader;
 use oh_my_rust::*;
 
 // TODO: return a result instead?
-pub trait AsRedis<'a, 'b> {
+pub trait AsRedis<'a> {
     type T: Read + Write;
-    type P: std::ops::DerefMut<Target=Self::T> + 'a;
-    fn as_redis(&'b self) -> Self::P;
+    type P: std::ops::DerefMut<Target=Self::T>;
+    fn as_redis(&'a self) -> Self::P;
 }
 
-impl<'a, 'b: 'a, T: Read + Write + 'a> AsRedis<'a, 'b> for RefCell<T> {
+impl<'a, T: Read + Write + 'a> AsRedis<'a> for RefCell<T> {
     type T = T;
     type P = RefMut<'a, T>;
-    fn as_redis(&'b self) -> Self::P {
+    fn as_redis(&'a self) -> Self::P {
         self.borrow_mut()
     }
 }
@@ -48,7 +48,7 @@ impl<Addr: std::net::ToSocketAddrs> TcpClient<Addr> {
     }
 }
 
-impl<'b, Addr: std::net::ToSocketAddrs> AsRedis<'static, 'b> for TcpClient<Addr> {
+impl<'a, Addr: std::net::ToSocketAddrs> AsRedis<'a> for TcpClient<Addr> {
     type T = TcpStream;
     type P = Box<TcpStream>;
     fn as_redis(&self) -> Self::P {
@@ -66,7 +66,7 @@ impl<Addr: AsRef<std::path::Path>> UnixClient<Addr> {
     }
 }
 
-impl<'b, Addr: AsRef<std::path::Path>> AsRedis<'static, 'b> for UnixClient<Addr> {
+impl<'a, Addr: AsRef<std::path::Path>> AsRedis<'a> for UnixClient<Addr> {
     type T = UnixStream;
     type P = Box<UnixStream>;
     fn as_redis(&self) -> Self::P {
@@ -74,18 +74,18 @@ impl<'b, Addr: AsRef<std::path::Path>> AsRedis<'static, 'b> for UnixClient<Addr>
     }
 }
 
-pub struct Pool<'b, A: AsRedis<'static, 'b>> {
+pub struct Pool<'a, A: AsRedis<'a>> {
     send: Sender<A::P>,
     recv: Arc<Mutex<Receiver<A::P>>>
 }
 
-impl<'b, A: AsRedis<'static, 'b>> Pool<'b, A> {
+impl<'a, A: AsRedis<'a>> Pool<'a, A> {
     // default size 10
-    pub fn new(client: &'b A) -> Self {
+    pub fn new(client: &'a A) -> Self {
         Self::with_capacity(client, 10)
     }
 
-    pub fn with_capacity(client: &'b A, num: usize) -> Self {
+    pub fn with_capacity(client: &'a A, num: usize) -> Self {
         let (send, recv) = channel();
         for _ in 0..num {
             send.send(client.as_redis()).unwrap();
@@ -94,7 +94,7 @@ impl<'b, A: AsRedis<'static, 'b>> Pool<'b, A> {
     }
 }
 
-impl<'inner, 'outer, A: AsRedis<'static, 'inner>> AsRedis<'static, 'outer> for Pool<'inner, A> {
+impl<'inner, 'outer, A: AsRedis<'inner>> AsRedis<'outer> for Pool<'inner, A> {
     type T = A::T;
     type P = A::P;
     fn as_redis(&'outer self) -> Self::P {
@@ -110,14 +110,14 @@ impl<'inner, 'outer, A: AsRedis<'static, 'inner>> AsRedis<'static, 'outer> for P
 //     }
 // }
 
-pub struct Session<'a, 'b, A: AsRedis<'a, 'b>> {
+pub struct Session<'a, 'b: 'a, A: AsRedis<'a>> {
     count: usize,
     buf: Vec<u8>,
     conn: &'b A,
-    phantom: std::marker::PhantomData<&'a ()>
+    phantom: std::marker::PhantomData<fn(&'a ())>
 }
 
-impl<'a,'b, A: AsRedis<'a, 'b>> Session<'a, 'b, A> {
+impl<'a, 'b, A: AsRedis<'a>> Session<'a, 'b, A> {
     pub fn new(conn: &'b A) -> Self {
         Session { count: 0, buf: vec![], conn, phantom: std::marker::PhantomData }
     }
@@ -194,7 +194,7 @@ pub enum Response {
 }
 
 impl Response {
-    pub fn unwrap_integer(self) -> i64 {
+    pub fn into_integer(self) -> i64 {
         if let Response::Integer(x) = self {
             x
         } else {
@@ -202,7 +202,7 @@ impl Response {
         }
     }
 
-    pub fn unwrap_text(self) -> String {
+    pub fn into_text(self) -> String {
         if let Response::Text(x) = self {
             x
         } else {
@@ -210,7 +210,7 @@ impl Response {
         }
     }
 
-    pub fn unwrap_bytes(self) -> Box<[u8]> {
+    pub fn into_bytes(self) -> Box<[u8]> {
         if let Response::Bytes(x) = self {
             x
         } else {
@@ -218,7 +218,7 @@ impl Response {
         }
     }
 
-    pub fn unwrap_list(self) -> Vec<Response> {
+    pub fn into_list(self) -> Vec<Response> {
         if let Response::List(x) = self {
             x
         } else {
@@ -227,7 +227,7 @@ impl Response {
     }
 
     #[allow(clippy::unused_unit)]
-    pub fn unwrap_nothing(self) -> () {
+    pub fn into_nothing(self) -> () {
         if let Response::Nothing = self {
             ()
         } else {
