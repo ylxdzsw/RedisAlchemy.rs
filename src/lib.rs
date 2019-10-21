@@ -22,54 +22,55 @@ use oh_my_rust::*;
 
 // TODO: return Result instead?
 pub trait AsRedis<'a, T, S>
-    where for <'b> &'b T: Read + Write, S: DerefMut<Target=T>
+    where for <'b> &'b T: Read + Write, S: DerefMut<Target=T> + 'a
 {
-    fn as_redis(&'a self) -> Session<T, S>;
+    fn as_redis(&self) -> Session<T, S>;
 }
 
-impl<'a> AsRedis<'a, UnixStream, std::cell::RefMut<'a, UnixStream>> for RefCell<UnixStream> {
-    fn as_redis(&'a self) -> Session<UnixStream, RefMut<'a, UnixStream>> {
-        Session::new(self.borrow_mut())
-    }
-}
+// impl<'a> AsRedis<'a, UnixStream, RefMut<'_, UnixStream>> for RefCell<UnixStream> + 'a {
+//     fn as_redis(&self) -> Session<'a, UnixStream, RefMut<'_, UnixStream>> {
+//         Session::new(self.borrow_mut())
+//     }
+// }
 
-impl<'a> AsRedis<'a, TcpStream, RefMut<'a, TcpStream>> for RefCell<TcpStream> {
-    fn as_redis(&'a self) -> Session<TcpStream, RefMut<'a, TcpStream>> {
-        Session::new(self.borrow_mut())
-    }
-}
+// impl AsRedis<TcpStream, RefMut<'_, TcpStream>> for RefCell<TcpStream> {
+//     fn as_redis(&self) -> Session<TcpStream, RefMut<'_, TcpStream>> {
+//         Session::new(self.borrow_mut())
+//     }
+// }
 
 // for convenience before we design and impl the various auto-managing clients and pools
-impl<'a, T: AsRef<std::path::Path> + ?Sized> AsRedis<'a, UnixStream, Box<UnixStream>> for T {
-    fn as_redis(&'a self) -> Session<UnixStream, Box<UnixStream>> {
+impl<T: AsRef<std::path::Path> + ?Sized> AsRedis<'static, UnixStream, Box<UnixStream>> for T {
+    fn as_redis(&self) -> Session<UnixStream, Box<UnixStream>> {
         let conn = UnixStream::connect(self).expect("cannot connect to redis");
         Session::new(Box::new(conn))
     }
 }
 
-impl<'a, T: std::net::ToSocketAddrs + ?Sized> AsRedis<'a, TcpStream, Box<TcpStream>> for T {
-    fn as_redis(&'a self) -> Session<TcpStream, Box<TcpStream>> {
+impl<T: std::net::ToSocketAddrs + ?Sized> AsRedis<'static, TcpStream, Box<TcpStream>> for T {
+    fn as_redis(&self) -> Session<TcpStream, Box<TcpStream>> {
         let conn = TcpStream::connect(self).expect("cannot connect to redis");
         Session::new(Box::new(conn))
     }
 }
 
-pub struct Session<T, S: DerefMut<Target=T>>
-    where for <'a> &'a T: Read + Write, T: ?Sized
+pub struct Session<'a, T, S: DerefMut<Target=T> + 'a>
+    where for <'b> &'b T: Read + Write, T: ?Sized
 {
     count: u32,
     buf: Vec<u8>,
-    conn: Option<S>
+    conn: Option<S>,
+    fuck: std::marker::PhantomData<&'a ()>
 }
 
-impl<T: Read + Write, S: DerefMut<Target=T>> Session<T, S>
-    where for <'a> &'a T: Read + Write
+impl<'a, T, S: DerefMut<Target=T> + 'a> Session<'a, T, S>
+    where for <'b> &'b T: Read + Write
 {
     pub fn new(conn: S) -> Self {
-        Session { count: 0, buf: vec![], conn: Some(conn) }
+        Session { count: 0, buf: vec![], conn: Some(conn), fuck: std::marker::PhantomData }
     }
 
-    pub fn arg(&mut self, x: &[u8]) -> &mut Self {
+    pub fn arg(mut self, x: &[u8]) -> Self {
         self.count += 1;
         write!(self.buf, "${}\r\n", x.len()).expect("bug");
         self.buf.extend_from_slice(x);
@@ -79,19 +80,22 @@ impl<T: Read + Write, S: DerefMut<Target=T>> Session<T, S>
 
     // one should drop the connection if this errored
     pub fn fetch(&mut self) -> Result<Response, String> {
-        let mut conn = self.conn.take().expect("bug");
-        // send
-        write!(conn, "*{}\r\n", self.count).map_err(|_| "failed writing to socket")?;
-        conn.write_all(&self.buf).map_err(|_| "failed writing to socket")?;
-        self.count = 0;
-        self.buf.clear();
+        let conn = self.conn.take().expect("bug");
 
+        // send
+        write!(&*conn, "*{}\r\n", self.count).map_err(|_| "failed writing to socket")?;
+        (&*conn).write_all(&self.buf).map_err(|_| "failed writing to socket")?;
+        
         // recv
         let mut reader = std::io::BufReader::new(&*conn);
         let res = parse_resp(&mut reader);
         if !reader.buffer().is_empty() {
             return Err("buffer not empty after read.".to_string())
         }
+
+        // reset
+        self.count = 0;
+        self.buf.clear();
         self.conn = Some(conn);
 
         res
