@@ -42,3 +42,18 @@ fn test_3() {
     let mut blob = Blob::new(client, &b"fuck"[..]);
     blob.set(b"yes");
 }
+
+#[test]
+fn test_4() {
+    let client = TcpClient::new("127.0.0.1:6379");
+    let mut blob = Blob::new(client, &b"fuck"[..]);
+    blob.set(b"yes");
+}
+
+#[test]
+fn test_5() {
+    let client = TcpClient::new("127.0.0.1:6379");
+    let client = Pool::new(&client);
+    let mut blob = Blob::new(client, &b"fuck"[..]);
+    blob.set(b"yes");
+}

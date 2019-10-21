@@ -5,5 +5,5 @@ authors = ["Shiwei Zhang <ylxdzsw@gmail.com>"]
 edition = "2018"
 
 [dependencies]
-oh-my-rust = { path = "/home/ylxdzsw/fuck-projects/oh-my-rust" }
-detached-bufreader = { path = "/home/ylxdzsw/fuck-projects/detached-bufreader" }
+oh-my-rust = { git = "https://github.com/ylxdzsw/oh-my-rust" }
+detached-bufreader = { git = "https://github.com/ylxdzsw/detached-bufreader.rs" }

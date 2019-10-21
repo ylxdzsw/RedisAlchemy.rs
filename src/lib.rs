@@ -5,8 +5,8 @@
 #![warn(clippy::all)]
 #![allow(clippy::write_with_newline)]
 
-// AsRedis: primary API. Anything that can initiate a valid redis session. Typically RefCell<UnixStream> and the clients. A AsRedis may fail if it is already in use, or pending if it needs to wait before makeing a new connection.
-// Command: a plain command builder buffer.
+// AsRedis: primary API. Anything that can initiate a valid redis session. Typically RefCell<&TcpStream>. An AsRedis may fail if it is already in use, or pending if it needs to wait before makeing a new connection.
+// Session: a command builder buffer bound on an AsRedis.
 // Collection: a collection represents the data behind a redis key.
 // Response: an enum of possible non-error return types from Redis.
 
@@ -17,49 +17,91 @@ use std::os::unix::net::UnixStream;
 use std::net::TcpStream;
 use std::io::prelude::*;
 use std::sync::*;
+use std::sync::mpsc::{channel, Sender, Receiver};
 use std::ops::DerefMut;
 use std::cell::{RefCell, RefMut};
 use detached_bufreader::BufReader;
 use oh_my_rust::*;
 
 // TODO: return a result instead?
-pub trait AsRedis<'a> {
+pub trait AsRedis<'a, 'b> {
     type T: Read + Write;
     type P: std::ops::DerefMut<Target=Self::T> + 'a;
-    fn as_redis(&'a self) -> Self::P;
+    fn as_redis(&'b self) -> Self::P;
 }
 
-impl<'a> AsRedis<'a> for RefCell<UnixStream> {
-    type T = UnixStream;
-    type P = RefMut<'a, UnixStream>;
-    fn as_redis(&'a self) -> Self::P {
+impl<'a, 'b: 'a, T: Read + Write + 'a> AsRedis<'a, 'b> for RefCell<T> {
+    type T = T;
+    type P = RefMut<'a, T>;
+    fn as_redis(&'b self) -> Self::P {
         self.borrow_mut()
     }
 }
 
-impl<'a, 'b: 'a> AsRedis<'a> for RefCell<&'b UnixStream> {
-    type T = &'b UnixStream;
-    type P = RefMut<'a, &'b UnixStream>;
-    fn as_redis(&'a self) -> Self::P {
-        self.borrow_mut()
+pub struct TcpClient<Addr: std::net::ToSocketAddrs> {
+    addr: Addr
+}
+
+impl<Addr: std::net::ToSocketAddrs> TcpClient<Addr> {
+    pub fn new(addr: Addr) -> TcpClient<Addr> {
+        Self { addr }
     }
 }
 
-impl<'a> AsRedis<'a> for RefCell<TcpStream> {
+impl<'b, Addr: std::net::ToSocketAddrs> AsRedis<'static, 'b> for TcpClient<Addr> {
     type T = TcpStream;
-    type P = RefMut<'a, TcpStream>;
-    fn as_redis(&'a self) -> Self::P {
-        self.borrow_mut()
+    type P = Box<TcpStream>;
+    fn as_redis(&self) -> Self::P {
+        Box::new(TcpStream::connect(&self.addr).unwrap())
     }
 }
 
-impl<'a, 'b: 'a> AsRedis<'a> for RefCell<&'b TcpStream> {
-    type T = &'b TcpStream;
-    type P = RefMut<'a, &'b TcpStream>;
-    fn as_redis(&'a self) -> Self::P {
-        self.borrow_mut()
+pub struct UnixClient<Addr: AsRef<std::path::Path>> {
+    addr: Addr
+}
+
+impl<Addr: AsRef<std::path::Path>> UnixClient<Addr> {
+    pub fn new(addr: Addr) -> UnixClient<Addr> {
+        Self { addr }
     }
 }
+
+impl<'b, Addr: AsRef<std::path::Path>> AsRedis<'static, 'b> for UnixClient<Addr> {
+    type T = UnixStream;
+    type P = Box<UnixStream>;
+    fn as_redis(&self) -> Self::P {
+        Box::new(UnixStream::connect(&self.addr).unwrap())
+    }
+}
+
+pub struct Pool<'b, A: AsRedis<'static, 'b>> {
+    send: Sender<A::P>,
+    recv: Arc<Mutex<Receiver<A::P>>>
+}
+
+impl<'b, A: AsRedis<'static, 'b>> Pool<'b, A> {
+    // default size 10
+    pub fn new(client: &'b A) -> Self {
+        Self::with_capacity(client, 10)
+    }
+
+    pub fn with_capacity(client: &'b A, num: usize) -> Self {
+        let (send, recv) = channel();
+        for _ in 0..num {
+            send.send(client.as_redis()).unwrap();
+        }
+        Self { send, recv: Arc::new(Mutex::new(recv)) }
+    }
+}
+
+impl<'inner, 'outer, A: AsRedis<'static, 'inner>> AsRedis<'static, 'outer> for Pool<'inner, A> {
+    type T = A::T;
+    type P = A::P;
+    fn as_redis(&'outer self) -> Self::P {
+        self.recv.lock().unwrap().recv().unwrap()
+    }
+} 
+
 
 // impl<T: std::net::ToSocketAddrs + ?Sized> AsRedis<'static, TcpStream, Box<TcpStream>> for T {
 //     fn as_redis(&self) -> Session<TcpStream, Box<TcpStream>> {
@@ -68,17 +110,16 @@ impl<'a, 'b: 'a> AsRedis<'a> for RefCell<&'b TcpStream> {
 //     }
 // }
 
-pub struct Session<'a, A: AsRedis<'a>> {
+pub struct Session<'a, 'b, A: AsRedis<'a, 'b>> {
     count: usize,
     buf: Vec<u8>,
-    conn: Option<&'a A>,
-    fuck: std::marker::PhantomData<&'a ()>
+    conn: &'b A,
+    phantom: std::marker::PhantomData<&'a ()>
 }
 
-// The additional requirements for T is from the fact that BufReader takes the ownership. Luckly both TcpStream and UnixStream meet the requirement, so it brings no actual problem for now.
-impl<'a, A: AsRedis<'a>> Session<'a, A> {
-    pub fn new(conn: &'a A) -> Self {
-        Session { count: 0, buf: vec![], conn: Some(conn), fuck: std::marker::PhantomData }
+impl<'a,'b, A: AsRedis<'a, 'b>> Session<'a, 'b, A> {
+    pub fn new(conn: &'b A) -> Self {
+        Session { count: 0, buf: vec![], conn, phantom: std::marker::PhantomData }
     }
 
     pub fn arg(mut self, x: &[u8]) -> Self {
@@ -91,15 +132,14 @@ impl<'a, A: AsRedis<'a>> Session<'a, A> {
 
     // one should drop the connection if this errored
     pub fn fetch(&mut self) -> Result<Response, String> {
-        let conn = self.conn.take().expect("bug");
+        let mut conn = self.conn.as_redis();
 
         // send
-        write!(conn.as_redis(), "*{}\r\n", self.count).map_err(|_| "failed writing to socket")?;
-        conn.as_redis().write_all(&self.buf).map_err(|_| "failed writing to socket")?;
+        write!(conn, "*{}\r\n", self.count).map_err(|_| "failed writing to socket")?;
+        conn.write_all(&self.buf).map_err(|_| "failed writing to socket")?;
 
         // recv
-        let mut xu = conn.as_redis();
-        let mut reader = BufReader::new(&mut *xu);
+        let mut reader = BufReader::with_capacity(64, &mut *conn);
         let res = parse_resp(&mut reader);
         if !reader.buffer().is_empty() {
             return Err("buffer not empty after read.".to_string())
@@ -108,7 +148,6 @@ impl<'a, A: AsRedis<'a>> Session<'a, A> {
         // reset
         self.count = 0;
         self.buf.clear();
-        self.conn = Some(conn);
 
         res
     }
@@ -155,7 +194,7 @@ pub enum Response {
 }
 
 impl Response {
-    pub fn into_integer(self) -> i64 {
+    pub fn unwrap_integer(self) -> i64 {
         if let Response::Integer(x) = self {
             x
         } else {
@@ -163,15 +202,7 @@ impl Response {
         }
     }
 
-    pub fn try_into_integer(self) -> Option<i64> {
-        if let Response::Integer(x) = self {
-            Some(x)
-        } else {
-            None
-        }
-    }
-
-    pub fn into_text(self) -> String {
+    pub fn unwrap_text(self) -> String {
         if let Response::Text(x) = self {
             x
         } else {
@@ -179,15 +210,7 @@ impl Response {
         }
     }
 
-    pub fn try_into_text(self) -> Option<String> {
-        if let Response::Text(x) = self {
-            Some(x)
-        } else {
-            None
-        }
-    }
-
-    pub fn into_bytes(self) -> Box<[u8]> {
+    pub fn unwrap_bytes(self) -> Box<[u8]> {
         if let Response::Bytes(x) = self {
             x
         } else {
@@ -195,44 +218,20 @@ impl Response {
         }
     }
 
-    pub fn try_into_bytes(self) -> Option<Box<[u8]>> {
-        if let Response::Bytes(x) = self {
-            Some(x)
-        } else {
-            None
-        }
-    }
-
-    pub fn into_list(self) -> Vec<Response> {
+    pub fn unwrap_list(self) -> Vec<Response> {
         if let Response::List(x) = self {
             x
         } else {
             panic!("not bytes")
-        }
-    }
-
-    pub fn try_into_list(self) -> Option<Vec<Response>> {
-        if let Response::List(x) = self {
-            Some(x)
-        } else {
-            None
         }
     }
 
     #[allow(clippy::unused_unit)]
-    pub fn into_nothing(self) -> () {
+    pub fn unwrap_nothing(self) -> () {
         if let Response::Nothing = self {
             ()
         } else {
             panic!("not nothing")
-        }
-    }
-
-    pub fn try_into_nothing(self) -> Option<()> {
-        if let Response::Nothing = self {
-            Some(())
-        } else {
-            None
         }
     }
 }
