@@ -5,7 +5,7 @@
 #![warn(clippy::all)]
 #![allow(clippy::write_with_newline)]
 
-// AsRedis: primary API. Anything that can initiate a valid redis session. Typically RefCell<&TcpStream>. An AsRedis may fail if it is already in use, or pending if it needs to wait before makeing a new connection.
+// AsRedis: primary API. Anything that can initiate a valid redis session. Typically RefCell<&TcpStream>. `as_redis` may fail if it is already in use, or block if it needs to wait before making a new connection.
 // Session: a command builder buffer bound on an AsRedis.
 // Collection: a collection represents the data behind a redis key.
 // Response: an enum of possible non-error return types from Redis.
@@ -100,21 +100,13 @@ impl<'inner, 'outer, A: AsRedis<'inner>> AsRedis<'outer> for Pool<'inner, A> {
     fn as_redis(&'outer self) -> Self::P {
         self.recv.lock().unwrap().recv().unwrap()
     }
-} 
-
-
-// impl<T: std::net::ToSocketAddrs + ?Sized> AsRedis<'static, TcpStream, Box<TcpStream>> for T {
-//     fn as_redis(&self) -> Session<TcpStream, Box<TcpStream>> {
-//         let conn = TcpStream::connect(self).expect("cannot connect to redis");
-//         Session::new(Box::new(conn))
-//     }
-// }
+}
 
 pub struct Session<'a, 'b: 'a, A: AsRedis<'a>> {
     count: usize,
     buf: Vec<u8>,
     conn: &'b A,
-    phantom: std::marker::PhantomData<fn(&'a ())>
+    phantom: std::marker::PhantomData<&'a ()>
 }
 
 impl<'a, 'b, A: AsRedis<'a>> Session<'a, 'b, A> {
@@ -122,7 +114,7 @@ impl<'a, 'b, A: AsRedis<'a>> Session<'a, 'b, A> {
         Session { count: 0, buf: vec![], conn, phantom: std::marker::PhantomData }
     }
 
-    pub fn arg(mut self, x: &[u8]) -> Self {
+    pub fn arg(&mut self, x: &[u8]) -> &mut Self {
         self.count += 1;
         write!(self.buf, "${}\r\n", x.len()).expect("bug");
         self.buf.extend_from_slice(x);

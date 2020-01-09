@@ -1,20 +1,19 @@
 use crate::*;
 
 /// blob is similar to Vec<u8>
-pub struct Blob<'a, A: AsRedis<'a>, K: std::borrow::Borrow<[u8]>>
+pub struct Blob<A, K: std::borrow::Borrow<[u8]>>
 {
     client: A,
-    key: K,
-    phantom: std::marker::PhantomData<fn(&'a ())>,
+    key: K
 }
 
-impl<'a, A: AsRedis<'a>, K: std::borrow::Borrow<[u8]>> Blob<'a, A, K> {
+impl<'a, A: AsRedis<'a>, K: std::borrow::Borrow<[u8]>> Blob<A, K> {
     pub fn new(client: A, key: K) -> Self {
-        Self { client, key, phantom: std::marker::PhantomData }
+        Self { client, key }
     }
 
     fn initiate<'b: 'a>(&'b mut self, cmd: &[u8]) -> Session<'a, 'b, A> {
-        Session::new(&self.client).arg(cmd).arg(self.key.borrow())
+        Session::new(&self.client).apply_owned(|x| x.arg(cmd).arg(self.key.borrow()).ignore())
     }
 
     pub fn set<'b: 'a>(&'b mut self, v: &[u8]) {
