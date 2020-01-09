@@ -5,8 +5,8 @@
 #![warn(clippy::all)]
 #![allow(clippy::write_with_newline)]
 
-// AsRedis: primary API. Anything that can initiate a valid redis session. Typically RefCell<&TcpStream>. `as_redis` may fail if it is already in use, or block if it needs to wait before making a new connection.
-// Session: a command builder buffer bound on an AsRedis.
+// AsRedis: anything that can initiate a valid redis session.
+// Session: a command builder buffer that is bound to a single connection.
 // Collection: a collection represents the data behind a redis key.
 // Response: an enum of possible non-error return types from Redis.
 
@@ -23,10 +23,10 @@ use std::cell::{RefCell, RefMut};
 use detached_bufreader::BufReader;
 use oh_my_rust::*;
 
-// TODO: return a result instead?
 pub trait AsRedis<'a> {
     type T: Read + Write;
     type P: std::ops::DerefMut<Target=Self::T>;
+    /// `as_redis` may panic if it is already in use, or block if it needs to wait before making a new connection.
     fn as_redis(&'a self) -> Self::P;
 }
 
@@ -102,16 +102,15 @@ impl<'inner, 'outer, A: AsRedis<'inner>> AsRedis<'outer> for Pool<'inner, A> {
     }
 }
 
-pub struct Session<'a, 'b: 'a, A: AsRedis<'a>> {
+pub struct Session<P> {
     count: usize,
     buf: Vec<u8>,
-    conn: &'b A,
-    phantom: std::marker::PhantomData<&'a ()>
+    conn: P
 }
 
-impl<'a, 'b, A: AsRedis<'a>> Session<'a, 'b, A> {
-    pub fn new(conn: &'b A) -> Self {
-        Session { count: 0, buf: vec![], conn, phantom: std::marker::PhantomData }
+impl<T: Read + Write, P: std::ops::DerefMut<Target=T>> Session<P> {
+    pub fn new(conn: P) -> Self {
+        Self { count: 0, buf: vec![], conn }
     }
 
     pub fn arg(&mut self, x: &[u8]) -> &mut Self {
@@ -122,31 +121,38 @@ impl<'a, 'b, A: AsRedis<'a>> Session<'a, 'b, A> {
         self // for chaining
     }
 
-    // one should drop the connection if this errored
+    /// execute the command and get response. one should drop the connection if this returns error
     pub fn fetch(&mut self) -> Result<Response, String> {
-        let mut conn = self.conn.as_redis();
+        self.send()?;
+        self.recv()
+    }
 
-        // send
-        write!(conn, "*{}\r\n", self.count).map_err(|_| "failed writing to socket")?;
-        conn.write_all(&self.buf).map_err(|_| "failed writing to socket")?;
+    /// execute command, panic if error, discard the result otherwise.
+    pub fn run(&mut self) -> &mut Self {
+        self.fetch().expect("redis failed");
+        self // for chaining
+    }
 
-        // recv
-        let mut reader = BufReader::with_capacity(64, &mut *conn);
+    /// low level instruction that only send the command without reading response. Note it also clears the buffer.
+    pub fn send(&mut self) -> Result<(), String> {
+        write!(self.conn, "*{}\r\n", self.count).msg("failed writing to socket")?;
+        self.conn.write_all(&self.buf).msg("failed writing to socket")?;
+        Ok(self.clear())
+    }
+
+    /// low level instruction that only read a response without sending request.
+    pub fn recv(&mut self) -> Result<Response, String> {
+        let mut reader = BufReader::with_capacity(64, &mut *self.conn);
         let res = parse_resp(&mut reader);
         if !reader.buffer().is_empty() {
             return Err("buffer not empty after read.".to_string())
         }
-
-        // reset
-        self.count = 0;
-        self.buf.clear();
-
         res
     }
-    
-    pub fn run(&mut self) -> &mut Self {
-        self.fetch().expect("redis failed");
-        self // for chaining
+
+    fn clear(&mut self) {
+        self.count = 0;
+        self.buf.clear();
     }
 }
 
@@ -186,7 +192,7 @@ pub enum Response {
 }
 
 impl Response {
-    pub fn into_integer(self) -> i64 {
+    pub fn integer(self) -> i64 {
         if let Response::Integer(x) = self {
             x
         } else {
@@ -194,7 +200,7 @@ impl Response {
         }
     }
 
-    pub fn into_text(self) -> String {
+    pub fn text(self) -> String {
         if let Response::Text(x) = self {
             x
         } else {
@@ -202,7 +208,7 @@ impl Response {
         }
     }
 
-    pub fn into_bytes(self) -> Box<[u8]> {
+    pub fn bytes(self) -> Box<[u8]> {
         if let Response::Bytes(x) = self {
             x
         } else {
@@ -210,7 +216,7 @@ impl Response {
         }
     }
 
-    pub fn into_list(self) -> Vec<Response> {
+    pub fn list(self) -> Vec<Response> {
         if let Response::List(x) = self {
             x
         } else {
@@ -219,7 +225,7 @@ impl Response {
     }
 
     #[allow(clippy::unused_unit)]
-    pub fn into_nothing(self) -> () {
+    pub fn nothing(self) -> () {
         if let Response::Nothing = self {
             ()
         } else {

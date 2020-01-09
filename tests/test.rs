@@ -5,18 +5,18 @@ use std::cell::RefCell;
 #[test]
  fn test_1() {
      let conn = RefCell::new(TcpStream::connect("127.0.0.1:6379").unwrap());
-     let res = Session::new(&conn)
+     let res = Session::new(conn.as_redis())
          .arg(b"set")
          .arg(b"fuck")
          .arg(b"1")
          .fetch();
-     assert_eq!(res.unwrap().into_text(), "OK")
+     assert_eq!(res.unwrap().text(), "OK")
  }
 
  #[test]
  fn test_2() {
      let conn = TcpClient::new("127.0.0.1:6379");
-     let mut sess = Session::new(&conn);
+     let mut sess = Session::new(conn.as_redis());
      sess.arg(b"del").arg(b"fucks").run();
 
      for i in 0..5 {
@@ -33,9 +33,9 @@ use std::cell::RefCell;
          .arg(b"-1")
          .fetch()
          .unwrap()
-         .into_list()
+         .list()
          .into_iter()
-         .map(|x| x.into_bytes()[0])
+         .map(|x| x.bytes()[0])
          .collect();
 
      assert_eq!(list, b"01234")

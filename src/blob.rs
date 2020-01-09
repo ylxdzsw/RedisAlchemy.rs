@@ -12,8 +12,8 @@ impl<'a, A: AsRedis<'a>, K: std::borrow::Borrow<[u8]>> Blob<A, K> {
         Self { client, key }
     }
 
-    fn initiate<'b: 'a>(&'b mut self, cmd: &[u8]) -> Session<'a, 'b, A> {
-        Session::new(&self.client).apply_owned(|x| x.arg(cmd).arg(self.key.borrow()).ignore())
+    fn initiate<'b: 'a>(&'b mut self, cmd: &[u8]) -> Session<A::P> {
+        Session::new(self.client.as_redis()).apply_owned(|x| x.arg(cmd).arg(self.key.borrow()).ignore())
     }
 
     pub fn set<'b: 'a>(&'b mut self, v: &[u8]) {
@@ -21,6 +21,6 @@ impl<'a, A: AsRedis<'a>, K: std::borrow::Borrow<[u8]>> Blob<A, K> {
     }
 
     pub fn get<'b: 'a>(&'b mut self) -> Box<[u8]> {
-        self.initiate(b"get").fetch().unwrap().into_bytes()
+        self.initiate(b"get").fetch().unwrap().bytes()
     }
 }
