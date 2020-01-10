@@ -6,12 +6,18 @@
 #![allow(clippy::write_with_newline)]
 
 // AsRedis: anything that can initiate a valid redis session.
-// Session: a command builder buffer that is bound to a single connection.
+// Session: a (short-lived) command builder buffer that is bound to a single connection.
 // Collection: a collection represents the data behind a redis key.
 // Response: an enum of possible non-error return types from Redis.
 
+// implementation notes:
+// 1. we mark &mut self for mutation operations even if not necessary.
+
 mod blob;
 pub use blob::*;
+
+mod bitvec;
+pub use bitvec::*;
 
 use std::os::unix::net::UnixStream;
 use std::net::TcpStream;
@@ -22,13 +28,17 @@ use std::ops::DerefMut;
 use std::cell::{RefCell, RefMut};
 use detached_bufreader::BufReader;
 use oh_my_rust::*;
+use crate::RedisError::IOError;
+use std::io::Error;
 
 pub trait AsRedis<'a> {
     type T: Read + Write;
     type P: std::ops::DerefMut<Target=Self::T>;
     /// `as_redis` may panic if it is already in use, or block if it needs to wait before making a new connection.
+    /// `AsRedis` implementations must ensure that there is only one Session for each connection at a time.
     fn as_redis(&'a self) -> Self::P;
-    // convenient method
+
+    /// convenient method, create a new session and set an arg
     fn arg(&'a self, x: &[u8]) -> Session<Self::P> {
         Session::new(self.as_redis()).apply(|s| s.arg(x).ignore())
     }
@@ -126,7 +136,7 @@ impl<T: Read + Write, P: std::ops::DerefMut<Target=T>> Session<P> {
     }
 
     /// execute the command and get response. one should drop the connection if this returns error
-    pub fn fetch(&mut self) -> Result<Response, String> {
+    pub fn fetch(&mut self) -> Result<Response, RedisError> {
         self.send()?;
         self.recv()
     }
@@ -138,18 +148,19 @@ impl<T: Read + Write, P: std::ops::DerefMut<Target=T>> Session<P> {
     }
 
     /// low level instruction that only send the command without reading response. Note it also clears the buffer.
-    pub fn send(&mut self) -> Result<(), String> {
-        write!(self.conn, "*{}\r\n", self.count).msg("failed writing to socket")?;
-        self.conn.write_all(&self.buf).msg("failed writing to socket")?;
-        Ok(self.clear())
+    pub fn send(&mut self) -> Result<(), std::io::Error> {
+        write!(self.conn, "*{}\r\n", self.count)?;
+        self.conn.write_all(&self.buf)?;
+        self.clear();
+        Ok(())
     }
 
     /// low level instruction that only read a response without sending request.
-    pub fn recv(&mut self) -> Result<Response, String> {
+    pub fn recv(&mut self) -> Result<Response, RedisError> {
         let mut reader = BufReader::with_capacity(64, &mut *self.conn);
         let res = parse_resp(&mut reader);
         if !reader.buffer().is_empty() {
-            return Err("buffer not empty after read.".to_string())
+            return Err(RedisError::ProtocolError("extra content in response"))
         }
         res
     }
@@ -160,34 +171,50 @@ impl<T: Read + Write, P: std::ops::DerefMut<Target=T>> Session<P> {
     }
 }
 
-fn parse_resp(r: &mut impl BufRead) -> Result<Response, String> {
+#[derive(Debug)]
+pub enum RedisError {
+    /// RESP protocol error
+    ProtocolError(&'static str),
+    /// Error returned by Redis
+    RedisError(String),
+    /// IO Error in communication with Redis
+    IOError(std::io::Error)
+}
+
+impl From<std::io::Error> for RedisError {
+    fn from(e: Error) -> Self {
+        Self::IOError(e)
+    }
+}
+
+fn parse_resp(r: &mut impl BufRead) -> Result<Response, RedisError> {
     let mut header = String::new();
-    r.read_line(&mut header).unwrap();
+    r.read_line(&mut header)?;
 
     let magic = header.as_bytes()[0];
     let header = header[1..].trim_end();
 
     match magic {
         b'+' => Ok(Response::Text(header.to_string())),
-        b'-' => Err(format!("redis error: {}", header)),
-        b':' => Ok(Response::Integer(header.parse().msg("protocol error")?)),
+        b'-' => Err(RedisError::RedisError(format!("redis error: {}", header))),
+        b':' => Ok(Response::Integer(header.parse().msg(RedisError::ProtocolError("parse integer response failed"))?)),
         b'$' => if header.as_bytes()[0] == b'-' {
             Ok(Response::Nothing)
         } else {
-            let len: u64 = header.parse().msg("protocol error")?;
-            let mut buf = r.read_exact_alloc((len + 2) as usize).msg("protocol error")?;
+            let len: u64 = header.parse().msg(RedisError::ProtocolError("parse bytes length failed"))?;
+            let mut buf = r.read_exact_alloc((len + 2) as usize)?;
             buf.truncate(len as usize); // remove the new line terminator
             Ok(Response::Bytes(buf.into_boxed_slice()))
         },
         b'*' => if header.as_bytes()[0] == b'-' {
             Ok(Response::Nothing)
         } else {
-            let len: u32 = header.parse().msg("protocol error")?;
+            let len: u32 = header.parse().msg(RedisError::ProtocolError("parse array length failed"))?;
             Ok(Response::List((0..len).map(|_| {
                 parse_resp(r)
             }).collect::<Result<Vec<_>, _>>()?))
         },
-        _ => Err("protocol error".to_string())
+        _ => Err(RedisError::ProtocolError("unknown response type"))
     }
 }
 

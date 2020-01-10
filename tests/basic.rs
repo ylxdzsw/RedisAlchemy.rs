@@ -59,3 +59,10 @@ fn pool() {
     let res = client.arg(b"set").arg(b"test").arg(b"1").fetch();
     assert_eq!(res.unwrap().text(), "OK")
 }
+
+#[test] #[should_panic]
+fn multiple_sessions_on_one_connection() {
+    let conn = RefCell::new(TcpStream::connect("127.0.0.1:6379").unwrap());
+    let _sess1 = conn.as_redis();
+    let _sess2 = conn.as_redis();
+}
