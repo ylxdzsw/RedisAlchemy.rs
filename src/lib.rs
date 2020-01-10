@@ -30,7 +30,7 @@ pub trait AsRedis<'a> {
     fn as_redis(&'a self) -> Self::P;
     // convenient method
     fn arg(&'a self, x: &[u8]) -> Session<Self::P> {
-        Session::new(self.as_redis()).apply_owned(|s| s.arg(x).ignore())
+        Session::new(self.as_redis()).apply(|s| s.arg(x).ignore())
     }
 }
 

@@ -13,7 +13,7 @@ impl<'a, A: AsRedis<'a>, K: std::borrow::Borrow<[u8]>> Blob<A, K> {
     }
 
     fn initiate<'b: 'a>(&'b mut self, cmd: &[u8]) -> Session<A::P> {
-        Session::new(self.client.as_redis()).apply_owned(|x| x.arg(cmd).arg(self.key.borrow()).ignore())
+        Session::new(self.client.as_redis()).apply(|x| x.arg(cmd).arg(self.key.borrow()).ignore())
     }
 
     pub fn set<'b: 'a>(&'b mut self, v: &[u8]) {

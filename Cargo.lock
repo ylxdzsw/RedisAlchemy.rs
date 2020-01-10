@@ -7,17 +7,17 @@ source = "git+https://github.com/ylxdzsw/detached-bufreader.rs#e70eb776fd1f0fbef
 
 [[package]]
 name = "oh-my-rust"
-version = "0.2.0"
-source = "git+https://github.com/ylxdzsw/oh-my-rust#f3bbaedb3d733726a76d688a7d5f0b61888e0529"
+version = "0.3.0"
+source = "git+https://github.com/ylxdzsw/oh-my-rust#cef094a7e6aaa403496d96f7f1f9a9ad9511e979"
 
 [[package]]
 name = "redis-alchemy"
 version = "0.1.0"
 dependencies = [
  "detached-bufreader 0.1.0 (git+https://github.com/ylxdzsw/detached-bufreader.rs)",
- "oh-my-rust 0.2.0 (git+https://github.com/ylxdzsw/oh-my-rust)",
+ "oh-my-rust 0.3.0 (git+https://github.com/ylxdzsw/oh-my-rust)",
 ]
 
 [metadata]
 "checksum detached-bufreader 0.1.0 (git+https://github.com/ylxdzsw/detached-bufreader.rs)" = "<none>"
-"checksum oh-my-rust 0.2.0 (git+https://github.com/ylxdzsw/oh-my-rust)" = "<none>"
+"checksum oh-my-rust 0.3.0 (git+https://github.com/ylxdzsw/oh-my-rust)" = "<none>"
