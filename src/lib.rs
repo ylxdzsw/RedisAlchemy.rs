@@ -10,11 +10,19 @@
 // Collection: a collection represents the data behind a redis key.
 // Response: an enum of possible non-error return types from Redis.
 
+// implementation designs and notes:
+// 1. we don't implement core::ops traits for redis collection due to we need &'a self for most methods.
+// 2. we use & reference even for mutable operations since the underlying data could be mutated by others anyway.
+// 3. we prefer method names that are the same with rust std than redis command name.
+
 mod blob;
 pub use blob::*;
 
 mod bitvec;
 pub use bitvec::*;
+
+mod list;
+pub use list::*;
 
 use std::os::unix::net::UnixStream;
 use std::net::TcpStream;
@@ -175,7 +183,9 @@ pub enum RedisError {
     /// Error returned by Redis
     RedisError(String),
     /// IO Error in communication with Redis
-    IOError(std::io::Error)
+    IOError(std::io::Error),
+    /// usually non-fatal errors on the programmer side that could be prevented
+    OtherError(String)
 }
 
 impl From<std::io::Error> for RedisError {

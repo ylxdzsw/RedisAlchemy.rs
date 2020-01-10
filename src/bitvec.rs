@@ -1,9 +1,6 @@
 use crate::*;
 use std::borrow::Borrow;
 
-// Notes:
-// 1. We need &'a self reference so we can't implement most of the traits in core::ops
-
 /// BitVec is conceptually similar to Vec<bool>
 pub struct BitVec<A, K>
 {
