@@ -1,7 +1,7 @@
 use crate::*;
 
 /// blob is similar to Vec<u8>
-pub struct Blob<A, K: std::borrow::Borrow<[u8]>>
+pub struct Blob<A, K>
 {
     client: A,
     key: K

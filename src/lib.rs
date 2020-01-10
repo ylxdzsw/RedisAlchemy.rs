@@ -28,6 +28,10 @@ pub trait AsRedis<'a> {
     type P: std::ops::DerefMut<Target=Self::T>;
     /// `as_redis` may panic if it is already in use, or block if it needs to wait before making a new connection.
     fn as_redis(&'a self) -> Self::P;
+    // convenient method
+    fn arg(&'a self, x: &[u8]) -> Session<Self::P> {
+        Session::new(self.as_redis()).apply_owned(|s| s.arg(x).ignore())
+    }
 }
 
 impl<'a, T: Read + Write + 'a> AsRedis<'a> for RefCell<T> {
