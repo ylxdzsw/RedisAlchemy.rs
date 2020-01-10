@@ -20,7 +20,7 @@ impl<'a, A: AsRedis<'a>, K: Borrow<[u8]>> BitVec<A, K> {
         self.client.arg(cmd).apply(|x| x.arg(self.key.borrow()).ignore())
     }
 
-    pub fn set_raw(&'a mut self, v: &[u8]) {
+    pub fn set_raw(&'a self, v: &[u8]) {
         self.initiate(b"set").arg(v).fetch().ignore()
     }
 
@@ -47,6 +47,10 @@ impl<'a, A: AsRedis<'a>, K: Borrow<[u8]>> BitVec<A, K> {
             panic!("length out of range")
         }
         Ok(8 * (l as usize))
+    }
+
+    pub fn clear(&'a self) -> Result<(), RedisError> {
+        self.initiate(b"del").fetch().map(|x| x.ignore())
     }
 
     /// count the number of 1 in the BitVec

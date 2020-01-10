@@ -28,7 +28,7 @@ fn unix_socket() {
 fn reuse_session() {
     let conn = TcpClient::new("127.0.0.1:6379");
     let mut sess = Session::new(conn.as_redis());
-    sess.arg(b"del").arg(b"test_reuse_session").run();
+    sess.arg(b"del").arg(b"test_reuse_session").run().unwrap();
 
     for i in 0..5 {
         sess.arg(b"rpush")

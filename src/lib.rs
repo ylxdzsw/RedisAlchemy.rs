@@ -10,9 +10,6 @@
 // Collection: a collection represents the data behind a redis key.
 // Response: an enum of possible non-error return types from Redis.
 
-// implementation notes:
-// 1. we mark &mut self for mutation operations even if not necessary.
-
 mod blob;
 pub use blob::*;
 
@@ -141,10 +138,10 @@ impl<T: Read + Write, P: std::ops::DerefMut<Target=T>> Session<P> {
         self.recv()
     }
 
-    /// execute command, panic if error, discard the result otherwise.
-    pub fn run(&mut self) -> &mut Self {
-        self.fetch().expect("redis failed");
-        self // for chaining
+    /// execute command and discard the result, return self for chaining.
+    pub fn run(&mut self) -> Result<&mut Self, RedisError> {
+        self.fetch()?;
+        Ok(self)
     }
 
     /// low level instruction that only send the command without reading response. Note it also clears the buffer.
