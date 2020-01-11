@@ -4,7 +4,7 @@ use std::cell::RefCell;
 
 #[test]
 fn basic() {
-    let res = RefCell::new(TcpStream::connect("127.0.0.1:6379").unwrap())
+    let res = TcpStream::connect("127.0.0.1:6379").unwrap()
         .arg(b"set")
         .arg(b"test")
         .arg(b"1")
@@ -52,13 +52,13 @@ fn reuse_session() {
     assert_eq!(list, b"01234")
 }
 
-#[test]
-fn pool() {
-    let client = TcpClient::new("127.0.0.1:6379");
-    let client = Pool::new(&client);
-    let res = client.arg(b"set").arg(b"test").arg(b"1").fetch();
-    assert_eq!(res.unwrap().text(), "OK")
-}
+//#[test]
+//fn pool() {
+//    let client = TcpClient::new("127.0.0.1:6379");
+//    let client = Pool::new(&client);
+//    let res = client.arg(b"set").arg(b"test").arg(b"1").fetch();
+//    assert_eq!(res.unwrap().text(), "OK")
+//}
 
 #[test] #[should_panic]
 fn multiple_sessions_on_one_connection() {

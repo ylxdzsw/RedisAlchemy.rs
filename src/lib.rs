@@ -11,7 +11,9 @@
 // Response: an enum of possible non-error return types from Redis.
 
 // implementation designs and notes:
-// 1. we don't implement core::ops traits for redis collection due to we need &'a self for most methods.
+// 1. since generic associated types are not implemented yet, if `as_redis` accept `&self`, we must specify a lifetime for `AsRedis` trait and use `&'a self` everywhere
+//   - it will prevent us from implementing core::ops that requires `&self`.
+//   - so we currently make it accept `self`, and implement `AsRedis` for references.
 // 2. we use & reference even for mutable operations since the underlying data could be mutated by others anyway.
 // 3. we prefer method names that are the same with rust std than redis command name.
 
@@ -36,28 +38,35 @@ use oh_my_rust::*;
 use crate::RedisError::IOError;
 use std::io::Error;
 
-pub trait AsRedis<'a> {
+/// Anything that can initiate a proper redis session. Typically implemented for references.
+pub trait AsRedis: Sized {
     type T: Read + Write;
     type P: std::ops::DerefMut<Target=Self::T>;
+
+    //noinspection RsSelfConvention
     /// `as_redis` may panic if it is already in use, or block if it needs to wait before making a new connection.
     /// `AsRedis` implementations must ensure that there is only one Session for each connection at a time.
-    fn as_redis(&'a self) -> Self::P;
+    fn as_redis(self) -> Self::P;
 
     /// convenient method, create a new session and set an arg
-    fn arg(&'a self, x: &[u8]) -> Session<Self::P> {
+    /// TODO: move this method to another trait? Since we impl AsRedis for many common types including `&mut impl Read + Write`
+    fn arg(self, x: &[u8]) -> Session<Self::P> {
         Session::new(self.as_redis()).apply(|s| s.arg(x).ignore())
     }
 }
 
-// this is why we need 'a in AsRedis
-// we must specify the lifetime for P
-// but we then can't say that we can return a P with any lifetime for self
-// one possibility is to give up for RefCell
-// also there is a work called generic associated types, but it not seems to be implemented soon.
-impl<'a, T: Read + Write + 'a> AsRedis<'a> for RefCell<T> {
+impl<'a, T: Read + Write + 'a> AsRedis for &'a mut T {
+    type T = T;
+    type P = &'a mut T;
+    fn as_redis(self) -> Self::P {
+        self
+    }
+}
+
+impl<'a, T: Read + Write + 'a> AsRedis for &'a RefCell<T> {
     type T = T;
     type P = RefMut<'a, T>;
-    fn as_redis(&'a self) -> Self::P {
+    fn as_redis(self) -> Self::P {
         self.borrow_mut()
     }
 }
@@ -72,10 +81,10 @@ impl<Addr: std::net::ToSocketAddrs> TcpClient<Addr> {
     }
 }
 
-impl<'a, Addr: std::net::ToSocketAddrs> AsRedis<'a> for TcpClient<Addr> {
+impl<Addr: std::net::ToSocketAddrs> AsRedis for &TcpClient<Addr> {
     type T = TcpStream;
     type P = Box<TcpStream>;
-    fn as_redis(&self) -> Self::P {
+    fn as_redis(self) -> Self::P {
         Box::new(TcpStream::connect(&self.addr).unwrap())
     }
 }
@@ -90,41 +99,43 @@ impl<Addr: AsRef<std::path::Path>> UnixClient<Addr> {
     }
 }
 
-impl<'a, Addr: AsRef<std::path::Path>> AsRedis<'a> for UnixClient<Addr> {
+impl<Addr: AsRef<std::path::Path>> AsRedis for &UnixClient<Addr> {
     type T = UnixStream;
     type P = Box<UnixStream>;
-    fn as_redis(&self) -> Self::P {
+    fn as_redis(self) -> Self::P {
         Box::new(UnixStream::connect(&self.addr).unwrap())
     }
 }
 
-pub struct Pool<'a, A: AsRedis<'a>> {
-    send: Sender<A::P>,
-    recv: Arc<Mutex<Receiver<A::P>>>
-}
+// The following causes recursion overflow in evaluating trait requirement. Don't know what to do now.
 
-impl<'a, A: AsRedis<'a>> Pool<'a, A> {
-    // default size 10
-    pub fn new(client: &'a A) -> Self {
-        Self::with_capacity(client, 10)
-    }
-
-    pub fn with_capacity(client: &'a A, num: usize) -> Self {
-        let (send, recv) = channel();
-        for _ in 0..num {
-            send.send(client.as_redis()).unwrap();
-        }
-        Self { send, recv: Arc::new(Mutex::new(recv)) }
-    }
-}
-
-impl<'inner, 'outer, A: AsRedis<'inner>> AsRedis<'outer> for Pool<'inner, A> {
-    type T = A::T;
-    type P = A::P;
-    fn as_redis(&'outer self) -> Self::P {
-        self.recv.lock().unwrap().recv().unwrap()
-    }
-}
+//pub struct Pool<'p, A: 'p> where &'p A: AsRedis {
+//    send: Sender<<&'p A as AsRedis>::P>,
+//    recv: Arc<Mutex<Receiver<<&'p A as AsRedis>::P>>>
+//}
+//
+//impl<'p, A: 'p> Pool<'p, A> where &'p A: AsRedis {
+//    // default size 10
+//    pub fn new(client: &'p A) -> Self {
+//        Self::with_capacity(client, 10)
+//    }
+//
+//    pub fn with_capacity(client: &'p A, num: usize) -> Self {
+//        let (send, recv) = channel();
+//        for _ in 0..num {
+//            send.send(client.as_redis()).unwrap();
+//        }
+//        Self { send, recv: Arc::new(Mutex::new(recv)) }
+//    }
+//}
+//
+//impl<'p, A: 'p> AsRedis for &'p Pool<'p, A> where &'p A: AsRedis {
+//    type T = <&'p A as AsRedis>::T;
+//    type P = <&'p A as AsRedis>::P;
+//    fn as_redis(self) -> Self::P {
+//        self.recv.lock().unwrap().recv().unwrap()
+//    }
+//}
 
 pub struct Session<P> {
     count: usize,
