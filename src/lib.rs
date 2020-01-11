@@ -49,6 +49,11 @@ pub trait AsRedis<'a> {
     }
 }
 
+// this is why we need 'a in AsRedis
+// we must specify the lifetime for P
+// but we then can't say that we can return a P with any lifetime for self
+// one possibility is to give up for RefCell
+// also there is a work called generic associated types, but it not seems to be implemented soon.
 impl<'a, T: Read + Write + 'a> AsRedis<'a> for RefCell<T> {
     type T = T;
     type P = RefMut<'a, T>;
