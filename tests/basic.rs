@@ -52,13 +52,21 @@ fn reuse_session() {
     assert_eq!(list, b"01234")
 }
 
-//#[test]
-//fn pool() {
-//    let client = TcpClient::new("127.0.0.1:6379");
-//    let client = Pool::new(&client);
-//    let res = client.arg(b"set").arg(b"test").arg(b"1").fetch();
-//    assert_eq!(res.unwrap().text(), "OK")
-//}
+#[test]
+fn pool() {
+    let client = TcpClient::new("127.0.0.1:6379");
+    let pool = Pool::new();
+    for _ in 0..10 {
+        pool.push(client.as_redis())
+    }
+    {
+        let pool = pool.clone();
+        std::thread::spawn(move || pool.arg(b"rpush").arg(b"pool").arg(b"1").fetch());
+    }
+    let res = pool.arg(b"blpop").arg(b"pool").arg(b"5").fetch().unwrap().list();
+    assert_eq!(&res[0].clone().bytes()[..], &b"pool"[..]);
+    assert_eq!(&res[1].clone().bytes()[..], &b"1"[..])
+}
 
 #[test] #[should_panic]
 fn multiple_sessions_on_one_connection() {

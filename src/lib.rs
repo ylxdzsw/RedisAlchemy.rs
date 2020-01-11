@@ -16,6 +16,7 @@
 //   - so we currently make it accept `self`, and implement `AsRedis` for references.
 // 2. we use & reference even for mutable operations since the underlying data could be mutated by others anyway.
 // 3. we prefer method names that are the same with rust std than redis command name.
+// 4. the pool is designed for non-blocking use: if you are using blocking command, better use separate connection to prevent deadlocks.
 
 mod blob;
 pub use blob::*;
@@ -31,7 +32,7 @@ use std::net::TcpStream;
 use std::io::prelude::*;
 use std::sync::*;
 use std::sync::mpsc::{channel, Sender, Receiver};
-use std::ops::DerefMut;
+use std::ops::{DerefMut, Deref};
 use std::cell::{RefCell, RefMut};
 use detached_bufreader::BufReader;
 use oh_my_rust::*;
@@ -41,7 +42,7 @@ use std::io::Error;
 /// Anything that can initiate a proper redis session. Typically implemented for references.
 pub trait AsRedis: Sized {
     type T: Read + Write;
-    type P: std::ops::DerefMut<Target=Self::T>;
+    type P: DerefMut<Target=Self::T>;
 
     //noinspection RsSelfConvention
     /// `as_redis` may panic if it is already in use, or block if it needs to wait before making a new connection.
@@ -107,35 +108,64 @@ impl<Addr: AsRef<std::path::Path>> AsRedis for &UnixClient<Addr> {
     }
 }
 
-// The following causes recursion overflow in evaluating trait requirement. Don't know what to do now.
+pub struct Pool<P> {
+    send: Sender<P>,
+    recv: Arc<Mutex<Receiver<P>>>
+}
 
-//pub struct Pool<'p, A: 'p> where &'p A: AsRedis {
-//    send: Sender<<&'p A as AsRedis>::P>,
-//    recv: Arc<Mutex<Receiver<<&'p A as AsRedis>::P>>>
-//}
-//
-//impl<'p, A: 'p> Pool<'p, A> where &'p A: AsRedis {
-//    // default size 10
-//    pub fn new(client: &'p A) -> Self {
-//        Self::with_capacity(client, 10)
-//    }
-//
-//    pub fn with_capacity(client: &'p A, num: usize) -> Self {
-//        let (send, recv) = channel();
-//        for _ in 0..num {
-//            send.send(client.as_redis()).unwrap();
-//        }
-//        Self { send, recv: Arc::new(Mutex::new(recv)) }
-//    }
-//}
-//
-//impl<'p, A: 'p> AsRedis for &'p Pool<'p, A> where &'p A: AsRedis {
-//    type T = <&'p A as AsRedis>::T;
-//    type P = <&'p A as AsRedis>::P;
-//    fn as_redis(self) -> Self::P {
-//        self.recv.lock().unwrap().recv().unwrap()
-//    }
-//}
+// manually impl since the .clone methods on members are not from Clone trait, so cannot derive
+impl<P> Clone for Pool<P> {
+    fn clone(&self) -> Self {
+        Self { send: self.send.clone(), recv: self.recv.clone() }
+    }
+}
+
+// TODO: remove the checks with unsafe code?
+pub struct PoolHandler<'p, P> {
+    data: Option<P>,
+    pool: &'p Pool<P>
+}
+
+impl<'p, T, P: DerefMut::<Target=T>> Deref for PoolHandler<'p, P> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        self.data.as_ref().unwrap()
+    }
+}
+
+impl<'p, T, P: DerefMut::<Target=T>> DerefMut for PoolHandler<'p, P> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.data.as_mut().unwrap()
+    }
+}
+
+impl<'p, P> Drop for PoolHandler<'p, P> {
+    fn drop(&mut self) {
+        self.pool.send.send(self.data.take().unwrap()).unwrap()
+    }
+}
+
+impl<P> Pool<P> {
+    pub fn new() -> Self {
+        let (send, recv) = channel();
+        Self { send, recv: Arc::new(Mutex::new(recv)) }
+    }
+
+    /// add a new connection into the pool
+    pub fn push(&self, x: P) {
+        self.send.send(x).expect("cannot return to the pool, maybe recv thread crashed")
+    }
+}
+
+impl<'p, T: Read + Write, P: DerefMut::<Target=T>> AsRedis for &'p Pool<P> {
+    type T = T;
+    type P = PoolHandler<'p, P>;
+    fn as_redis(self) -> PoolHandler<'p, P> {
+        let data = self.recv.lock().unwrap().recv().unwrap();
+        PoolHandler { data: Some(data), pool: self }
+    }
+}
 
 pub struct Session<P> {
     count: usize,
@@ -241,6 +271,7 @@ fn parse_resp(r: &mut impl BufRead) -> Result<Response, RedisError> {
     }
 }
 
+#[derive(Debug, Clone)]
 pub enum Response {
     Integer(i64), Text(String), Bytes(Box<[u8]>), List(Vec<Response>), Nothing
 }
