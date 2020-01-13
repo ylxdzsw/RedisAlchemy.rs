@@ -1,6 +1,7 @@
 use crate::*;
 use std::borrow::Borrow;
 use std::collections::VecDeque;
+use std::ops::{RangeBounds, Bound};
 
 /// List is conceptually similar to Vec<T>
 pub struct List<A, K, T=Box<[u8]>>
@@ -36,14 +37,46 @@ impl<A, K: Borrow<[u8]>, T: serde::Serialize + serde::de::DeserializeOwned> List
         self.initiate(b"rpush").arg(&buf).fetch().map(|x| x.ignore())
     }
 
-    pub fn get(&self, i: usize) -> Result<T, RedisError> {
-        let buf = self.initiate(b"lindex").arg(i.to_string().as_bytes()).fetch().map(|x| x.bytes())?;
-        let res: T = serde_json::from_slice(&buf).map_err(deserialization_error)?;
-        Ok(res)
+    pub fn get(&self, i: i64) -> Result<Option<T>, RedisError> {
+        match self.initiate(b"lindex").arg(i.to_string().as_bytes()).fetch()? {
+            Response::Bytes(x) => serde_json::from_slice(&x).map_err(deserialization_error),
+            Response::Nothing => Ok(None),
+            _ => unreachable!()
+        }
     }
 
     pub fn iter(&self) -> impl Iterator<Item=T> + '_ {
         self.into_iter()
+    }
+
+    // Note: the end bound is *included* in redis
+    pub fn range(&self, range: impl RangeBounds<i64>) -> Result<Box<[T]>, RedisError> {
+        let start = match range.start_bound() {
+            Bound::Included(x) => *x,
+            Bound::Excluded(x) => if *x == -1 {
+                return Ok(vec![].into())
+            } else {
+                x + 1
+            },
+            Bound::Unbounded => 0
+        } as i64;
+
+        let end = match range.end_bound() {
+            Bound::Included(x) => *x,
+            Bound::Excluded(x) => if *x == 0 {
+                return Ok(vec![].into())
+            } else {
+                x - 1
+            },
+            Bound::Unbounded => -1
+        };
+
+        self.initiate(b"lrange")
+            .arg(start.to_string().as_bytes())
+            .arg(end.to_string().as_bytes())
+            .fetch()?.list().into_iter()
+            .map(|x| serde_json::from_slice(&x.bytes()).map_err(deserialization_error))
+            .collect()
     }
 }
 

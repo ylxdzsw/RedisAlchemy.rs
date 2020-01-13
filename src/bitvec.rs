@@ -40,9 +40,6 @@ impl<A, K: Borrow<[u8]>> BitVec<A, K> where for<'a> &'a A: AsRedis {
 
     pub fn len(&self) -> Result<usize, RedisError> {
         let l = self.initiate(b"strlen").fetch()?.integer();
-        if l < 0 || l as u64 > (std::usize::MAX / 8) as u64 {
-            panic!("length out of range")
-        }
         Ok(8 * (l as usize))
     }
 

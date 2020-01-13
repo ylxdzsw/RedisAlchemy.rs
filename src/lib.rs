@@ -230,7 +230,7 @@ pub enum RedisError {
     RedisError(String),
     /// IO Error in communication with Redis
     IOError(std::io::Error),
-    /// usually non-fatal errors on the programmer side that could be prevented
+    /// Errors that you are unlikely to handle by code
     OtherError(String)
 }
 
