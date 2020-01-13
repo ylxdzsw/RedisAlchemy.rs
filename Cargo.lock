@@ -17,8 +17,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 
 [[package]]
 name = "oh-my-rust"
-version = "0.3.0"
-source = "git+https://github.com/ylxdzsw/oh-my-rust#cef094a7e6aaa403496d96f7f1f9a9ad9511e979"
+version = "0.4.0"
+source = "git+https://github.com/ylxdzsw/oh-my-rust#7afebd4fb09f336bfc614cbc4009816d2ecd229a"
 
 [[package]]
 name = "redis-alchemy"
@@ -26,7 +26,7 @@ version = "0.1.0"
 dependencies = [
  "collect-enum 0.1.0 (git+https://github.com/ylxdzsw/collect-enum)",
  "detached-bufreader 0.1.0 (git+https://github.com/ylxdzsw/detached-bufreader)",
- "oh-my-rust 0.3.0 (git+https://github.com/ylxdzsw/oh-my-rust)",
+ "oh-my-rust 0.4.0 (git+https://github.com/ylxdzsw/oh-my-rust)",
  "serde 1.0.104 (registry+https://github.com/rust-lang/crates.io-index)",
  "serde_json 1.0.44 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
@@ -55,7 +55,7 @@ dependencies = [
 "checksum collect-enum 0.1.0 (git+https://github.com/ylxdzsw/collect-enum)" = "<none>"
 "checksum detached-bufreader 0.1.0 (git+https://github.com/ylxdzsw/detached-bufreader)" = "<none>"
 "checksum itoa 0.4.4 (registry+https://github.com/rust-lang/crates.io-index)" = "501266b7edd0174f8530248f87f99c88fbe60ca4ef3dd486835b8d8d53136f7f"
-"checksum oh-my-rust 0.3.0 (git+https://github.com/ylxdzsw/oh-my-rust)" = "<none>"
+"checksum oh-my-rust 0.4.0 (git+https://github.com/ylxdzsw/oh-my-rust)" = "<none>"
 "checksum ryu 1.0.2 (registry+https://github.com/rust-lang/crates.io-index)" = "bfa8506c1de11c9c4e4c38863ccbe02a305c8188e85a05a784c9e11e1c3910c8"
 "checksum serde 1.0.104 (registry+https://github.com/rust-lang/crates.io-index)" = "414115f25f818d7dfccec8ee535d76949ae78584fc4f79a6f45a904bf8ab4449"
 "checksum serde_json 1.0.44 (registry+https://github.com/rust-lang/crates.io-index)" = "48c575e0cc52bdd09b47f330f646cf59afc586e9c4e3ccd6fc1f625b8ea1dad7"
