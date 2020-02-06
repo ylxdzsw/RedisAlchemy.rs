@@ -37,6 +37,39 @@ impl<A, K: Borrow<[u8]>, T: serde::Serialize + serde::de::DeserializeOwned> List
         self.initiate(b"rpush").arg(&buf).fetch().map(|x| x.ignore())
     }
 
+    pub fn extend(&self, x: &[T]) -> Result<(), RedisError> { // TODO: push in batch if the number is too big
+        if x.is_empty() {
+            return Ok(())
+        }
+
+        let mut sess = self.initiate(b"rpush");
+        for e in x {
+            sess.arg(&serde_json::to_vec(e).map_err(serialization_error)?);
+        }
+        sess.fetch().map(|x| x.ignore())
+    }
+
+    pub fn push_front(&self, x: &T) -> Result<(), RedisError> {
+        let buf = serde_json::to_vec(x).map_err(serialization_error)?;
+        self.initiate(b"lpush").arg(&buf).fetch().map(|x| x.ignore())
+    }
+
+    pub fn pop(&self) -> Result<Option<T>, RedisError> {
+        match self.initiate(b"rpop").fetch()? {
+            Response::Bytes(x) => serde_json::from_slice(&x).map_err(deserialization_error),
+            Response::Nothing => Ok(None),
+            _ => unreachable!()
+        }
+    }
+
+    pub fn pop_front(&self) -> Result<Option<T>, RedisError> {
+        match self.initiate(b"lpop").fetch()? {
+            Response::Bytes(x) => serde_json::from_slice(&x).map_err(deserialization_error),
+            Response::Nothing => Ok(None),
+            _ => unreachable!()
+        }
+    }
+
     pub fn get(&self, i: i64) -> Result<Option<T>, RedisError> {
         match self.initiate(b"lindex").arg(i.to_string().as_bytes()).fetch()? {
             Response::Bytes(x) => serde_json::from_slice(&x).map_err(deserialization_error),
@@ -45,8 +78,18 @@ impl<A, K: Borrow<[u8]>, T: serde::Serialize + serde::de::DeserializeOwned> List
         }
     }
 
+    /// Sets the list element at i to v. An error is returned for out of range indexes.
+    pub fn set(&self, i: i64, v: &T) -> Result<(), RedisError> {
+        let buf = serde_json::to_vec(v).map_err(serialization_error)?;
+        self.initiate(b"lset").arg(i.to_string().as_bytes()).arg(&buf).fetch().map(|x| x.ignore())
+    }
+
     pub fn iter(&self) -> impl Iterator<Item=T> + '_ {
         self.into_iter()
+    }
+
+    pub fn to_vec(&self) -> Result<Vec<T>, RedisError> {
+        self.range(..).map(|x| x.into_vec())
     }
 
     // Note: the end bound is *included* in redis

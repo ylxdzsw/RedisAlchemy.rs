@@ -120,7 +120,6 @@ impl<P> Clone for Pool<P> {
     }
 }
 
-// TODO: remove the checks with unsafe code?
 pub struct PoolHandler<'p, P> {
     data: Option<P>,
     pool: &'p Pool<P>
@@ -130,19 +129,19 @@ impl<'p, T, P: DerefMut::<Target=T>> Deref for PoolHandler<'p, P> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
-        self.data.as_ref().unwrap()
+        unsafe { self.data.as_ref().unwrap_unchecked() }
     }
 }
 
 impl<'p, T, P: DerefMut::<Target=T>> DerefMut for PoolHandler<'p, P> {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        self.data.as_mut().unwrap()
+        unsafe { self.data.as_mut().unwrap_unchecked() }
     }
 }
 
 impl<'p, P> Drop for PoolHandler<'p, P> {
     fn drop(&mut self) {
-        self.pool.send.send(self.data.take().unwrap()).unwrap()
+        self.pool.send.send(unsafe { self.data.take().unwrap_unchecked() }).expect("bug pushing to pool")
     }
 }
 
@@ -154,7 +153,7 @@ impl<P> Pool<P> {
 
     /// add a new connection into the pool
     pub fn push(&self, x: P) {
-        self.send.send(x).expect("cannot return to the pool, maybe recv thread crashed")
+        self.send.send(x).expect("bug pushing to pool")
     }
 }
 
