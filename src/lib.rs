@@ -17,6 +17,9 @@
 // 2. we use & reference even for mutable operations since the underlying data could be mutated by others anyway.
 // 3. we prefer method names that are the same with rust std than redis command name.
 // 4. the pool is designed for non-blocking use: if you are using blocking command, better use separate connection to prevent deadlocks.
+// 5. currently no traits other than iters are implemented because we return Result for every op.
+//   - Maybe add a wrapper that automatically unwrap so we can implement traits?
+//   - or make all methods unwrap by default, while provides prefixed methods that returns results.
 
 mod blob;
 pub use blob::*;
@@ -26,6 +29,9 @@ pub use bitvec::*;
 
 mod list;
 pub use list::*;
+
+mod map;
+pub use map::*;
 
 use std::os::unix::net::UnixStream;
 use std::net::TcpStream;
@@ -38,6 +44,7 @@ use detached_bufreader::BufReader;
 use oh_my_rust::*;
 use crate::RedisError::IOError;
 use std::io::Error;
+use std::iter::FromIterator;
 
 /// Anything that can initiate a proper redis session. Typically implemented for references.
 pub trait AsRedis: Sized {
@@ -154,6 +161,22 @@ impl<P> Pool<P> {
     /// add a new connection into the pool
     pub fn push(&self, x: P) {
         self.send.send(x).expect("bug pushing to pool")
+    }
+}
+
+impl<P> Default for Pool<P> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<P> FromIterator<P> for Pool<P> {
+    fn from_iter<T: IntoIterator<Item=P>>(iter: T) -> Self {
+        let pool = Self::new();
+        for x in iter {
+            pool.push(x)
+        }
+        pool
     }
 }
 
@@ -305,7 +328,7 @@ impl Response {
         if let Response::List(x) = self {
             x
         } else {
-            panic!("not bytes")
+            panic!("not list")
         }
     }
 

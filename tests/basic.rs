@@ -56,10 +56,7 @@ fn reuse_session() {
 #[test]
 fn pool() {
     let client = TcpClient::new("127.0.0.1:6379");
-    let pool = Pool::new();
-    for _ in 0..10 {
-        pool.push(client.as_redis())
-    }
+    let pool: Pool<_> = (0..10).map(|_| client.as_redis()).collect();
     {
         let pool = pool.clone();
         std::thread::spawn(move || pool.arg(b"rpush").arg(b"pool").arg(b"1").fetch());

@@ -38,11 +38,6 @@ impl<A, K: Borrow<[u8]>> BitVec<A, K> where for<'a> &'a A: AsRedis {
             .fetch().map(|x| x.integer() != 0)
     }
 
-    pub fn len(&self) -> Result<usize, RedisError> {
-        let l = self.initiate(b"strlen").fetch()?.integer();
-        Ok(8 * (l as usize))
-    }
-
     pub fn clear(&self) -> Result<(), RedisError> {
         self.initiate(b"del").fetch().map(|x| x.ignore())
     }

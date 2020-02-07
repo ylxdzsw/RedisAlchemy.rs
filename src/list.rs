@@ -96,6 +96,10 @@ impl<A, K: Borrow<[u8]>, T: serde::Serialize + serde::de::DeserializeOwned> List
         self.initiate(b"llen").fetch().map(|x| x.integer() as _)
     }
 
+    pub fn is_empty(&self) -> Result<bool, RedisError> {
+        Ok(self.len()? == 0)
+    }
+
     pub fn sort_numeric(&self) -> Result<(), RedisError> {
         unimplemented!()
     }

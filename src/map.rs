@@ -4,22 +4,25 @@ use std::collections::VecDeque;
 use std::ops::{RangeBounds, Bound};
 
 /// List is conceptually similar to Vec<T>
-pub struct Map<A, K, T=Box<[u8]>, V=Box<[u8]>>
+pub struct Map<A, K, F=Box<[u8]>, V=Box<[u8]>>
 {
     client: A,
     key: K,
-    phantom: std::marker::PhantomData<(T, V)>
+    phantom: std::marker::PhantomData<(F, V)>
 }
 
-fn serialization_error<T>(_: T) -> RedisError {
+fn serialization_error<F>(_: F) -> RedisError {
     RedisError::OtherError("Serialization failed".to_string())
 }
 
-fn deserialization_error<T>(_: T) -> RedisError {
+fn deserialization_error<F>(_: F) -> RedisError {
     RedisError::OtherError("Deserialization failed".to_string())
 }
 
-impl<A, K: Borrow<[u8]>, T: serde::Serialize + serde::de::DeserializeOwned> List<A, K, T> where for<'a> &'a A: AsRedis {
+impl<A, K: Borrow<[u8]>, F, V> Map<A, K, F, V> where
+        for<'a> &'a A: AsRedis,
+        F: serde::Serialize + serde::de::DeserializeOwned,
+        V: serde::Serialize + serde::de::DeserializeOwned {
     pub fn new(client: A, key: K) -> Self {
         Self { client, key, phantom: std::marker::PhantomData }
     }
@@ -32,135 +35,91 @@ impl<A, K: Borrow<[u8]>, T: serde::Serialize + serde::de::DeserializeOwned> List
         self.initiate(b"del").fetch().map(|x| x.ignore())
     }
 
-    pub fn push(&self, x: &T) -> Result<(), RedisError> {
-        let buf = serde_json::to_vec(x).map_err(serialization_error)?;
-        self.initiate(b"rpush").arg(&buf).fetch().map(|x| x.ignore())
-    }
-
-    pub fn extend(&self, x: &[T]) -> Result<(), RedisError> { // TODO: push in batch if the number is too big
-        if x.is_empty() {
-            return Ok(())
-        }
-
-        let mut sess = self.initiate(b"rpush");
-        for e in x {
-            sess.arg(&serde_json::to_vec(e).map_err(serialization_error)?);
-        }
-        sess.fetch().map(|x| x.ignore())
-    }
-
-    pub fn push_front(&self, x: &T) -> Result<(), RedisError> {
-        let buf = serde_json::to_vec(x).map_err(serialization_error)?;
-        self.initiate(b"lpush").arg(&buf).fetch().map(|x| x.ignore())
-    }
-
-    pub fn pop(&self) -> Result<Option<T>, RedisError> {
-        match self.initiate(b"rpop").fetch()? {
+    pub fn get(&self, field: &F) -> Result<Option<V>, RedisError> {
+        match self.initiate(b"hget").arg(&serde_json::to_vec(field).map_err(serialization_error)?).fetch()? {
             Response::Bytes(x) => serde_json::from_slice(&x).map_err(deserialization_error),
             Response::Nothing => Ok(None),
             _ => unreachable!()
         }
     }
 
-    pub fn pop_front(&self) -> Result<Option<T>, RedisError> {
-        match self.initiate(b"lpop").fetch()? {
-            Response::Bytes(x) => serde_json::from_slice(&x).map_err(deserialization_error),
-            Response::Nothing => Ok(None),
-            _ => unreachable!()
-        }
+    pub fn insert(&self, field: &F, value: &V) -> Result<(), RedisError> {
+        let field_buf = serde_json::to_vec(field).map_err(serialization_error)?;
+        let value_buf = serde_json::to_vec(value).map_err(serialization_error)?;
+        self.initiate(b"hset").arg(&field_buf).arg(&value_buf).fetch().map(|x| x.ignore())
     }
 
-    pub fn get(&self, i: i64) -> Result<Option<T>, RedisError> {
-        match self.initiate(b"lindex").arg(i.to_string().as_bytes()).fetch()? {
-            Response::Bytes(x) => serde_json::from_slice(&x).map_err(deserialization_error),
-            Response::Nothing => Ok(None),
-            _ => unreachable!()
-        }
+    pub fn remove(&self, field: &F) -> Result<(), RedisError> {
+        let buf = serde_json::to_vec(field).map_err(serialization_error)?;
+        self.initiate(b"hdel").arg(&buf).fetch().map(|x| x.ignore())
     }
 
-    /// Sets the list element at i to v. An error is returned for out of range indexes.
-    pub fn set(&self, i: i64, v: &T) -> Result<(), RedisError> {
-        let buf = serde_json::to_vec(v).map_err(serialization_error)?;
-        self.initiate(b"lset").arg(i.to_string().as_bytes()).arg(&buf).fetch().map(|x| x.ignore())
+    pub fn contains_key(&self, field: &F) -> Result<bool, RedisError> {
+        let buf = serde_json::to_vec(field).map_err(serialization_error)?;
+        self.initiate(b"hexists").arg(&buf).fetch().map(|x| x.integer() == 1)
     }
 
-    pub fn iter(&self) -> impl Iterator<Item=T> + '_ {
-        self.into_iter()
-    }
-
-    pub fn to_vec(&self) -> Result<Vec<T>, RedisError> {
-        self.range(..).map(|x| x.into_vec())
+    pub fn extend(&self, _pairs: &[(F, V)]) -> Result<(), RedisError> {
+        unimplemented!()
     }
 
     pub fn len(&self) -> Result<usize, RedisError> {
-        self.initiate(b"llen").fetch().map(|x| x.integer() as _)
+        self.initiate(b"hlen").fetch().map(|x| x.integer() as _)
     }
 
-    pub fn sort_numeric(&self) -> Result<(), RedisError> {
-        unimplemented!()
+    pub fn is_empty(&self) -> Result<bool, RedisError> {
+        Ok(self.len()? == 0)
     }
 
-    pub fn sort_alphabetic(&self) -> Result<(), RedisError> {
-        unimplemented!()
-    }
-
-    pub fn trim(&self, _start: i64, _end: i64) -> Result<(), RedisError> {
-        unimplemented!()
-    }
-
-    // Note: the end bound is *included* in redis
-    pub fn range(&self, range: impl RangeBounds<i64>) -> Result<Box<[T]>, RedisError> {
-        let start = match range.start_bound() {
-            Bound::Included(x) => *x,
-            Bound::Excluded(x) => if *x == -1 {
-                return Ok(vec![].into())
-            } else {
-                x + 1
-            },
-            Bound::Unbounded => 0
-        } as i64;
-
-        let end = match range.end_bound() {
-            Bound::Included(x) => *x,
-            Bound::Excluded(x) => if *x == 0 {
-                return Ok(vec![].into())
-            } else {
-                x - 1
-            },
-            Bound::Unbounded => -1
-        };
-
-        self.initiate(b"lrange")
-            .arg(start.to_string().as_bytes())
-            .arg(end.to_string().as_bytes())
-            .fetch()?.list().into_iter()
-            .map(|x| serde_json::from_slice(&x.bytes()).map_err(deserialization_error))
-            .collect()
+    pub fn iter(&self) -> impl Iterator<Item=(F, V)> + '_ {
+        self.into_iter()
     }
 }
 
-const BATCH_SIZE: usize = 12;
+const BATCH_HINT: usize = 12;
 
-pub struct ListIter<'l, A, K, T> {
-    buf: VecDeque<T>,
-    index: usize,
-    list: &'l List<A, K, T>
+pub struct MapIter<'m, A, K, F, V> {
+    buf: VecDeque<(F, V)>,
+    cursor: Box<[u8]>,
+    map: &'m Map<A, K, F, V>,
+    done: bool
 }
 
-impl<'l, A, K: Borrow<[u8]>, T: serde::Serialize + serde::de::DeserializeOwned> Iterator for ListIter<'l, A, K, T> where for<'a> &'a A: AsRedis {
-    type Item = T;
+impl<'m, A, K: Borrow<[u8]>, F, V> Iterator for MapIter<'m, A, K, F, V> where
+        for<'a> &'a A: AsRedis,
+        F: serde::Serialize + serde::de::DeserializeOwned,
+        V: serde::Serialize + serde::de::DeserializeOwned {
+    type Item = (F, V);
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.buf.is_empty() { // try to get a batch
-            let batch = self.list.initiate(b"lrange")
-                .arg(self.index.to_string().as_bytes())
-                .arg((self.index + BATCH_SIZE).to_string().as_bytes())
+            if self.done {
+                return None
+            }
+            let mut res = self.map.initiate(b"hscan")
+                .arg(&self.cursor)
                 .fetch().expect("Error during iteration").list();
 
-            self.index += batch.len();
-            for x in batch.into_iter() {
-                let x = serde_json::from_slice(&x.bytes()).map_err(deserialization_error).expect("Error during iteration");
-                self.buf.push_back(x)
+            // Rust sucks in destructing vectors
+            let buf = res.pop().unwrap().list();
+            let cursor = res.pop().unwrap().bytes();
+
+            if cursor[..] == b"0"[..] {
+                self.done = true
+            } else {
+                self.cursor = cursor;
+            }
+
+            let mut current_field = None; // the buf is interleaved with fields and values
+            for x in buf.into_iter() {
+                if let Some(field) = current_field {
+                    let value = serde_json::from_slice(&x.bytes()).map_err(deserialization_error).expect("Error during iteration");
+                    self.buf.push_back((field, value));
+                    current_field = None
+                } else {
+                    let field = serde_json::from_slice(&x.bytes()).map_err(deserialization_error).expect("Error during iteration");
+                    current_field = Some(field)
+                }
             }
         }
 
@@ -168,11 +127,14 @@ impl<'l, A, K: Borrow<[u8]>, T: serde::Serialize + serde::de::DeserializeOwned> 
     }
 }
 
-impl<'l, A, K: Borrow<[u8]>, T: serde::Serialize + serde::de::DeserializeOwned> IntoIterator for &'l List<A, K, T> where for<'a> &'a A: AsRedis {
-    type Item = T;
-    type IntoIter = ListIter<'l, A, K, T>;
+impl<'m, A, K: Borrow<[u8]>, F, V> IntoIterator for &'m Map<A, K, F, V> where
+        for<'a> &'a A: AsRedis,
+        F: serde::Serialize + serde::de::DeserializeOwned,
+        V: serde::Serialize + serde::de::DeserializeOwned {
+    type Item = (F, V);
+    type IntoIter = MapIter<'m, A, K, F, V>;
 
     fn into_iter(self) -> Self::IntoIter {
-        ListIter { buf: VecDeque::with_capacity(BATCH_SIZE), index: 0, list: self }
+        MapIter { buf: VecDeque::with_capacity(BATCH_HINT), cursor: b"0"[..].into(), map: self, done: false }
     }
 }
