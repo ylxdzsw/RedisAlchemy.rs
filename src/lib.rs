@@ -193,7 +193,7 @@ impl<T: Read + Write, P: std::ops::DerefMut<Target=T>> Session<P> {
 
     /// execute command and discard the result, return self for chaining.
     pub fn run(&mut self) -> Result<&mut Self, RedisError> {
-        self.fetch()?;
+        self.fetch()?.ignore();
         Ok(self)
     }
 
@@ -270,6 +270,7 @@ fn parse_resp(r: &mut impl BufRead) -> Result<Response, RedisError> {
     }
 }
 
+#[must_use]
 #[derive(Debug, Clone)]
 pub enum Response {
     Integer(i64), Text(String), Bytes(Box<[u8]>), List(Vec<Response>), Nothing
@@ -315,5 +316,9 @@ impl Response {
         } else {
             panic!("not nothing")
         }
+    }
+
+    pub fn ok(self) {
+        assert!(self.text() == "OK")
     }
 }

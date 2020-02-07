@@ -1,6 +1,7 @@
 use redis_alchemy::*;
 use std::net::TcpStream;
 use std::cell::RefCell;
+use oh_my_rust::MonadExt;
 
 #[test]
 fn basic() {
@@ -34,7 +35,7 @@ fn reuse_session() {
         sess.arg(b"rpush")
             .arg(b"test_reuse_session")
             .arg(i.to_string().as_bytes())
-            .fetch().unwrap();
+            .fetch().unwrap().ignore();
     }
 
     let list: Vec<_> = sess

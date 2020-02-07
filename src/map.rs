@@ -4,11 +4,11 @@ use std::collections::VecDeque;
 use std::ops::{RangeBounds, Bound};
 
 /// List is conceptually similar to Vec<T>
-pub struct List<A, K, T=Box<[u8]>>
+pub struct Map<A, K, T=Box<[u8]>, V=Box<[u8]>>
 {
     client: A,
     key: K,
-    phantom: std::marker::PhantomData<T>
+    phantom: std::marker::PhantomData<(T, V)>
 }
 
 fn serialization_error<T>(_: T) -> RedisError {

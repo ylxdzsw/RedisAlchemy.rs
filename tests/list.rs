@@ -9,6 +9,7 @@ fn list() {
     for i in &x {
         list.push(i).unwrap()
     }
+    assert_eq!(list.len().unwrap(), 3);
     assert_eq!(list.get(0).unwrap().unwrap(), -1);
     assert_eq!(list.get(0).unwrap().unwrap(), -1);
     assert!(list.get(5).unwrap().is_none());
