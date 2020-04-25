@@ -61,6 +61,15 @@ impl<A, K: Borrow<[u8]>, T> List<A, K, T> where for<'a> &'a A: AsRedis {
         }
     }
 
+    /// blocking pop_front. return None when timeout reached. timeout is the number of seconds to wait. 0 means waiting indefinitely.
+    pub fn recv(&self, timeout: i64) -> Result<Option<T>, RedisError> {
+        match self.initiate(b"blpop").arg(timeout.to_string().as_bytes()).fetch()? {
+            Response::List(x) => Ok(Some((self.deserializer)(x[1].as_bytes()))), // x[0] is the key since `blpop` supports polling multiple keys
+            Response::Nothing => Ok(None),
+            _ => unreachable!()
+        }
+    }
+
     pub fn get(&self, i: i64) -> Result<Option<T>, RedisError> {
         match self.initiate(b"lindex").arg(i.to_string().as_bytes()).fetch()? {
             Response::Bytes(x) => Ok(Some((self.deserializer)(&x))),

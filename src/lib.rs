@@ -307,7 +307,23 @@ impl Response {
         }
     }
 
+    pub fn as_integer(&self) -> i64 {
+        if let Response::Integer(x) = self {
+            *x
+        } else {
+            panic!("not an integer")
+        }
+    }
+
     pub fn text(self) -> String {
+        if let Response::Text(x) = self {
+            x
+        } else {
+            panic!("not a text")
+        }
+    }
+
+    pub fn as_text(&self) -> &str {
         if let Response::Text(x) = self {
             x
         } else {
@@ -323,6 +339,14 @@ impl Response {
         }
     }
 
+    pub fn as_bytes(&self) -> &[u8] {
+        if let Response::Bytes(x) = self {
+            x
+        } else {
+            panic!("not bytes")
+        }
+    }
+
     pub fn list(self) -> Vec<Response> {
         if let Response::List(x) = self {
             x
@@ -331,16 +355,23 @@ impl Response {
         }
     }
 
-    #[allow(clippy::unused_unit)]
-    pub fn nothing(self) -> () {
-        if let Response::Nothing = self {
-            ()
+    pub fn as_list(&self) -> &[Response] {
+        if let Response::List(x) = self {
+            x
         } else {
-            panic!("not nothing")
+            panic!("not list")
         }
     }
 
-    pub fn ok(self) {
+    pub fn is_nothing(self) -> bool {
+        if let Response::Nothing = self {
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn is_ok(self) {
         assert!(self.text() == "OK")
     }
 }
