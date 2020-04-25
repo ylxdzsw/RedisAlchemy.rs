@@ -21,8 +21,8 @@
 //   - Maybe add a wrapper that automatically unwrap so we can implement traits?
 //   - or make all methods unwrap by default, while provides prefixed methods that returns results.
 
-mod blob;
-pub use blob::*;
+mod cell;
+pub use cell::*;
 
 mod bitvec;
 pub use bitvec::*;

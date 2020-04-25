@@ -4,24 +4,17 @@ use std::collections::VecDeque;
 use std::ops::{RangeBounds, Bound};
 
 /// List is conceptually similar to Vec<T>
-pub struct List<A, K, T=Box<[u8]>>
+pub struct List<A, K, T>
 {
     client: A,
     key: K,
-    phantom: std::marker::PhantomData<T>
+    serializer: fn(x: &T) -> Box<[u8]>,
+    deserializer: fn(x: &[u8]) -> T
 }
 
-fn serialization_error<T>(_: T) -> RedisError {
-    RedisError::OtherError("Serialization failed".to_string())
-}
-
-fn deserialization_error<T>(_: T) -> RedisError {
-    RedisError::OtherError("Deserialization failed".to_string())
-}
-
-impl<A, K: Borrow<[u8]>, T: serde::Serialize + serde::de::DeserializeOwned> List<A, K, T> where for<'a> &'a A: AsRedis {
-    pub fn new(client: A, key: K) -> Self {
-        Self { client, key, phantom: std::marker::PhantomData }
+impl<A, K: Borrow<[u8]>, T> List<A, K, T> where for<'a> &'a A: AsRedis {
+    pub fn new(client: A, key: K, serializer: fn(x: &T) -> Box<[u8]>, deserializer: fn(x: &[u8]) -> T) -> Self {
+        Self { client, key, serializer, deserializer }
     }
 
     fn initiate(&self, cmd: &[u8]) -> Session<<&A as AsRedis>::P> {
@@ -32,31 +25,29 @@ impl<A, K: Borrow<[u8]>, T: serde::Serialize + serde::de::DeserializeOwned> List
         self.initiate(b"del").fetch().map(|x| x.ignore())
     }
 
-    pub fn push(&self, x: &T) -> Result<(), RedisError> {
-        let buf = serde_json::to_vec(x).map_err(serialization_error)?;
-        self.initiate(b"rpush").arg(&buf).fetch().map(|x| x.ignore())
+    pub fn push(&self, x: impl Borrow<T>) -> Result<(), RedisError> {
+        self.initiate(b"rpush").arg(&(self.serializer)(x.borrow())).fetch().map(|x| x.ignore())
     }
 
-    pub fn extend(&self, x: &[T]) -> Result<(), RedisError> { // TODO: push in batch if the number is too big
+    pub fn extend(&self, x: &[impl Borrow<T>]) -> Result<(), RedisError> { // TODO: push in batch if the number is too big
         if x.is_empty() {
             return Ok(())
         }
 
         let mut sess = self.initiate(b"rpush");
-        for e in x {
-            sess.arg(&serde_json::to_vec(e).map_err(serialization_error)?);
+        for v in x {
+            sess.arg(&(self.serializer)(v.borrow()));
         }
         sess.fetch().map(|x| x.ignore())
     }
 
-    pub fn push_front(&self, x: &T) -> Result<(), RedisError> {
-        let buf = serde_json::to_vec(x).map_err(serialization_error)?;
-        self.initiate(b"lpush").arg(&buf).fetch().map(|x| x.ignore())
+    pub fn push_front(&self, x: impl Borrow<T>) -> Result<(), RedisError> {
+        self.initiate(b"lpush").arg(&(self.serializer)(x.borrow())).fetch().map(|x| x.ignore())
     }
 
     pub fn pop(&self) -> Result<Option<T>, RedisError> {
         match self.initiate(b"rpop").fetch()? {
-            Response::Bytes(x) => serde_json::from_slice(&x).map_err(deserialization_error),
+            Response::Bytes(x) => Ok(Some((self.deserializer)(&x))),
             Response::Nothing => Ok(None),
             _ => unreachable!()
         }
@@ -64,7 +55,7 @@ impl<A, K: Borrow<[u8]>, T: serde::Serialize + serde::de::DeserializeOwned> List
 
     pub fn pop_front(&self) -> Result<Option<T>, RedisError> {
         match self.initiate(b"lpop").fetch()? {
-            Response::Bytes(x) => serde_json::from_slice(&x).map_err(deserialization_error),
+            Response::Bytes(x) => Ok(Some((self.deserializer)(&x))),
             Response::Nothing => Ok(None),
             _ => unreachable!()
         }
@@ -72,16 +63,15 @@ impl<A, K: Borrow<[u8]>, T: serde::Serialize + serde::de::DeserializeOwned> List
 
     pub fn get(&self, i: i64) -> Result<Option<T>, RedisError> {
         match self.initiate(b"lindex").arg(i.to_string().as_bytes()).fetch()? {
-            Response::Bytes(x) => serde_json::from_slice(&x).map_err(deserialization_error),
+            Response::Bytes(x) => Ok(Some((self.deserializer)(&x))),
             Response::Nothing => Ok(None),
             _ => unreachable!()
         }
     }
 
     /// Sets the list element at i to v. An error is returned for out of range indexes.
-    pub fn set(&self, i: i64, v: &T) -> Result<(), RedisError> {
-        let buf = serde_json::to_vec(v).map_err(serialization_error)?;
-        self.initiate(b"lset").arg(i.to_string().as_bytes()).arg(&buf).fetch().map(|x| x.ignore())
+    pub fn set(&self, i: i64, v: impl Borrow<T>) -> Result<(), RedisError> {
+        self.initiate(b"lset").arg(i.to_string().as_bytes()).arg(&(self.serializer)(v.borrow())).fetch().map(|x| x.ignore())
     }
 
     pub fn iter(&self) -> impl Iterator<Item=T> + '_ {
@@ -134,12 +124,12 @@ impl<A, K: Borrow<[u8]>, T: serde::Serialize + serde::de::DeserializeOwned> List
             Bound::Unbounded => -1
         };
 
-        self.initiate(b"lrange")
+        Ok(self.initiate(b"lrange")
             .arg(start.to_string().as_bytes())
             .arg(end.to_string().as_bytes())
             .fetch()?.list().into_iter()
-            .map(|x| serde_json::from_slice(&x.bytes()).map_err(deserialization_error))
-            .collect()
+            .map(|x| (self.deserializer)(&x.bytes()))
+            .collect())
     }
 }
 
@@ -151,7 +141,7 @@ pub struct ListIter<'l, A, K, T> {
     list: &'l List<A, K, T>
 }
 
-impl<'l, A, K: Borrow<[u8]>, T: serde::Serialize + serde::de::DeserializeOwned> Iterator for ListIter<'l, A, K, T> where for<'a> &'a A: AsRedis {
+impl<'l, A, K: Borrow<[u8]>, T> Iterator for ListIter<'l, A, K, T> where for<'a> &'a A: AsRedis {
     type Item = T;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -163,7 +153,7 @@ impl<'l, A, K: Borrow<[u8]>, T: serde::Serialize + serde::de::DeserializeOwned> 
 
             self.index += batch.len();
             for x in batch.into_iter() {
-                let x = serde_json::from_slice(&x.bytes()).map_err(deserialization_error).expect("Error during iteration");
+                let x = (self.list.deserializer)(&x.bytes());
                 self.buf.push_back(x)
             }
         }
@@ -172,7 +162,7 @@ impl<'l, A, K: Borrow<[u8]>, T: serde::Serialize + serde::de::DeserializeOwned> 
     }
 }
 
-impl<'l, A, K: Borrow<[u8]>, T: serde::Serialize + serde::de::DeserializeOwned> IntoIterator for &'l List<A, K, T> where for<'a> &'a A: AsRedis {
+impl<'l, A, K: Borrow<[u8]>, T> IntoIterator for &'l List<A, K, T> where for<'a> &'a A: AsRedis {
     type Item = T;
     type IntoIter = ListIter<'l, A, K, T>;
 

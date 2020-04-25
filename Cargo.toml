@@ -8,5 +8,3 @@ edition = "2018"
 oh-my-rust = { git = "https://github.com/ylxdzsw/oh-my-rust" }
 collect-enum = { git = "https://github.com/ylxdzsw/collect-enum" }
 detached-bufreader = { git = "https://github.com/ylxdzsw/detached-bufreader" }
-serde = "1.0"
-serde_json = "1.0"
