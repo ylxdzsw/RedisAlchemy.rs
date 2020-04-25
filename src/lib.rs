@@ -51,7 +51,6 @@ pub trait AsRedis: Sized {
     type T: Read + Write;
     type P: DerefMut<Target=Self::T>;
 
-    //noinspection RsSelfConvention
     /// `as_redis` may panic if it is already in use, or block if it needs to wait before making a new connection.
     /// `AsRedis` implementations must ensure that there is only one Session for each connection at a time.
     fn as_redis(self) -> Self::P;
