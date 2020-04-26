@@ -3,7 +3,7 @@ use redis_alchemy::*;
 #[test]
 fn list() {
     let client = TcpClient::new("127.0.0.1:6379");
-    let list = List::new(client, &b"list"[..], |x: &i32| format!("{}", x).into_bytes().into(), |x| std::str::from_utf8(x).unwrap().parse().unwrap());
+    let list = List::new(&client, &b"list"[..], |x: &i32| format!("{}", x).into_bytes().into(), |x| std::str::from_utf8(x).unwrap().parse().unwrap());
     list.clear().unwrap();
     let x = [-1, 0, 257];
     for i in &x {
@@ -25,7 +25,7 @@ fn list() {
 #[test]
 fn list_mutation() {
     let client = TcpClient::new("127.0.0.1:6379");
-    let list = List::new(client, &b"list_mutation"[..], |x: &i32| x.to_string().into_bytes().into(), |x| std::str::from_utf8(x).unwrap().parse().unwrap());
+    let list = List::new(&client, &b"list_mutation"[..], |x: &i32| x.to_string().into_bytes().into(), |x| std::str::from_utf8(x).unwrap().parse().unwrap());
     list.clear().unwrap();
 
     list.extend(&[2, 3]).unwrap();
@@ -44,7 +44,7 @@ fn list_mutation() {
 #[test]
 fn list_iter() {
     let client = TcpClient::new("127.0.0.1:6379");
-    let list = List::new(client, &b"list_iter"[..], |x: &i32| x.to_string().into_bytes().into(), |x| std::str::from_utf8(x).unwrap().parse().unwrap());
+    let list = List::new(&client, &b"list_iter"[..], |x: &i32| x.to_string().into_bytes().into(), |x| std::str::from_utf8(x).unwrap().parse().unwrap());
     list.clear().unwrap();
     list.push(&-24).unwrap();
     list.push(&257).unwrap();
@@ -55,7 +55,7 @@ fn list_iter() {
 #[test]
 fn list_blocking() {
     let client = TcpClient::new("127.0.0.1:6379");
-    let list = List::new(client, &b"list_blocking"[..], |x: &i32| x.to_string().into_bytes().into(), |x| std::str::from_utf8(x).unwrap().parse().unwrap());
+    let list = List::new(&client, &b"list_blocking"[..], |x: &i32| x.to_string().into_bytes().into(), |x| std::str::from_utf8(x).unwrap().parse().unwrap());
     list.clear().unwrap();
 
     assert_eq!(list.recv(1).unwrap(), None);

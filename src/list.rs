@@ -12,13 +12,13 @@ pub struct List<A, K, T>
     deserializer: fn(x: &[u8]) -> T
 }
 
-impl<A, K: Borrow<[u8]>, T> List<A, K, T> where for<'a> &'a A: AsRedis {
+impl<A: AsRedis + Clone, K: Borrow<[u8]>, T> List<A, K, T> {
     pub fn new(client: A, key: K, serializer: fn(x: &T) -> Box<[u8]>, deserializer: fn(x: &[u8]) -> T) -> Self {
         Self { client, key, serializer, deserializer }
     }
 
-    fn initiate(&self, cmd: &[u8]) -> Session<<&A as AsRedis>::P> {
-        self.client.arg(cmd).apply(|x| x.arg(self.key.borrow()).ignore())
+    fn initiate(&self, cmd: &[u8]) -> Session<A::P> {
+        self.client.clone().arg(cmd).apply(|x| x.arg(self.key.borrow()).ignore())
     }
 
     pub fn clear(&self) -> Result<(), RedisError> {
@@ -150,7 +150,7 @@ pub struct ListIter<'l, A, K, T> {
     list: &'l List<A, K, T>
 }
 
-impl<'l, A, K: Borrow<[u8]>, T> Iterator for ListIter<'l, A, K, T> where for<'a> &'a A: AsRedis {
+impl<'l, A: AsRedis + Clone, K: Borrow<[u8]>, T> Iterator for ListIter<'l, A, K, T> {
     type Item = T;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -171,7 +171,7 @@ impl<'l, A, K: Borrow<[u8]>, T> Iterator for ListIter<'l, A, K, T> where for<'a>
     }
 }
 
-impl<'l, A, K: Borrow<[u8]>, T> IntoIterator for &'l List<A, K, T> where for<'a> &'a A: AsRedis {
+impl<'l, A: AsRedis + Clone, K: Borrow<[u8]>, T> IntoIterator for &'l List<A, K, T> {
     type Item = T;
     type IntoIter = ListIter<'l, A, K, T>;
 
