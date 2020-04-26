@@ -2,21 +2,22 @@ use crate::*;
 use std::borrow::Borrow;
 
 /// Cell is a container that can hold only one value.
-pub struct Cell<A, K, T>
+pub struct Cell<A, C, K, T>
 {
-    client: A,
+    client: C,
     key: K,
     serializer: fn(x: &T) -> Box<[u8]>,
-    deserializer: fn(x: &[u8]) -> T
+    deserializer: fn(x: &[u8]) -> T,
+    phantom: std::marker::PhantomData<A>
 }
 
-impl<A: AsRedis + Clone, K: Borrow<[u8]>, T> Cell<A, K, T> {
-    pub fn new(client: A, key: K, serializer: fn(x: &T) -> Box<[u8]>, deserializer: fn(x: &[u8]) -> T) -> Self {
-        Self { client, key, serializer, deserializer }
+impl<A, C: Deref<Target=A>, K: Borrow<[u8]>, T> Cell<A, C, K, T> where for<'a> &'a A: AsRedis {
+    pub fn new(client: C, key: K, serializer: fn(x: &T) -> Box<[u8]>, deserializer: fn(x: &[u8]) -> T) -> Self {
+        Self { client, key, serializer, deserializer, phantom: std::marker::PhantomData }
     }
 
-    fn initiate(&self, cmd: &[u8]) -> Session<A::P> {
-        self.client.clone().arg(cmd).apply(|x| x.arg(self.key.borrow()).ignore())
+    fn initiate(&self, cmd: &[u8]) -> Session<<&A as AsRedis>::P> {
+        self.client.arg(cmd).apply(|x| x.arg(self.key.borrow()).ignore())
     }
 
     pub fn set(&self, v: impl Borrow<T>) -> Result<(), RedisError> {

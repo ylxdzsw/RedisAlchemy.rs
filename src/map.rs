@@ -4,25 +4,26 @@ use std::collections::VecDeque;
 use std::ops::{RangeBounds, Bound};
 
 /// Maps associate fields with values
-pub struct Map<A, K, F, V>
+pub struct Map<A, C, K, F, V>
 {
-    client: A,
+    client: C,
     key: K,
     field_serializer: fn(x: &F) -> Box<[u8]>,
     field_deserializer: fn(x: &[u8]) -> F,
     value_serializer: fn(x: &V) -> Box<[u8]>,
-    value_deserializer: fn(x: &[u8]) -> V
+    value_deserializer: fn(x: &[u8]) -> V,
+    phantom: std::marker::PhantomData<A>
 }
 
-impl<A, K: Borrow<[u8]>, F, V> Map<A, K, F, V> where for<'a> &'a A: AsRedis {
+impl<A, C: Deref<Target=A>, K: Borrow<[u8]>, F, V> Map<A, C, K, F, V> where for<'a> &'a A: AsRedis {
     pub fn new(
-        client: A, key: K,
+        client: C, key: K,
         field_serializer: fn(x: &F) -> Box<[u8]>,
         field_deserializer: fn(x: &[u8]) -> F,
         value_serializer: fn(x: &V) -> Box<[u8]>,
         value_deserializer: fn(x: &[u8]) -> V
     ) -> Self {
-        Self { client, key, field_serializer, field_deserializer, value_serializer, value_deserializer }
+        Self { client, key, field_serializer, field_deserializer, value_serializer, value_deserializer, phantom: std::marker::PhantomData }
     }
 
     fn initiate(&self, cmd: &[u8]) -> Session<<&A as AsRedis>::P> {
@@ -75,14 +76,14 @@ impl<A, K: Borrow<[u8]>, F, V> Map<A, K, F, V> where for<'a> &'a A: AsRedis {
 
 const BATCH_HINT: usize = 12;
 
-pub struct MapIter<'m, A, K, F, V> {
+pub struct MapIter<'m, A, C, K, F, V> {
     buf: VecDeque<(F, V)>,
     cursor: Box<[u8]>,
-    map: &'m Map<A, K, F, V>,
+    map: &'m Map<A, C, K, F, V>,
     done: bool
 }
 
-impl<'m, A, K: Borrow<[u8]>, F, V> Iterator for MapIter<'m, A, K, F, V> where for<'a> &'a A: AsRedis {
+impl<'m, A, C: Deref<Target=A>, K: Borrow<[u8]>, F, V> Iterator for MapIter<'m, A, C, K, F, V> where for<'a> &'a A: AsRedis {
     type Item = (F, V);
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -121,9 +122,9 @@ impl<'m, A, K: Borrow<[u8]>, F, V> Iterator for MapIter<'m, A, K, F, V> where fo
     }
 }
 
-impl<'m, A, K: Borrow<[u8]>, F, V> IntoIterator for &'m Map<A, K, F, V> where for<'a> &'a A: AsRedis {
+impl<'m, A, C: Deref<Target=A>, K: Borrow<[u8]>, F, V> IntoIterator for &'m Map<A, C, K, F, V> where for<'a> &'a A: AsRedis {
     type Item = (F, V);
-    type IntoIter = MapIter<'m, A, K, F, V>;
+    type IntoIter = MapIter<'m, A, C, K, F, V>;
 
     fn into_iter(self) -> Self::IntoIter {
         MapIter { buf: VecDeque::with_capacity(BATCH_HINT), cursor: b"0"[..].into(), map: self, done: false }

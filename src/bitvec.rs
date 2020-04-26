@@ -2,15 +2,16 @@ use crate::*;
 use std::borrow::Borrow;
 
 /// BitVec is conceptually similar to Vec<bool>
-pub struct BitVec<A, K>
+pub struct BitVec<A, C, K>
 {
-    client: A,
-    key: K
+    client: C,
+    key: K,
+    phantom: std::marker::PhantomData<A>
 }
 
-impl<A, K: Borrow<[u8]>> BitVec<A, K> where for<'a> &'a A: AsRedis {
-    pub fn new(client: A, key: K) -> Self {
-        Self { client, key }
+impl<A, C: Deref<Target=A>, K: Borrow<[u8]>> BitVec<A, C, K> where for<'a> &'a A: AsRedis {
+    pub fn new(client: C, key: K) -> Self {
+        Self { client, key, phantom: std::marker::PhantomData }
     }
 
     fn initiate(&self, cmd: &[u8]) -> Session<<&A as AsRedis>::P> {

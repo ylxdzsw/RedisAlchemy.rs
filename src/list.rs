@@ -4,21 +4,22 @@ use std::collections::VecDeque;
 use std::ops::{RangeBounds, Bound};
 
 /// List is conceptually similar to Vec<T>
-pub struct List<A, K, T>
+pub struct List<A, C, K, T>
 {
-    client: A,
+    client: C,
     key: K,
     serializer: fn(x: &T) -> Box<[u8]>,
-    deserializer: fn(x: &[u8]) -> T
+    deserializer: fn(x: &[u8]) -> T,
+    phantom: std::marker::PhantomData<A>
 }
 
-impl<A: AsRedis + Clone, K: Borrow<[u8]>, T> List<A, K, T> {
-    pub fn new(client: A, key: K, serializer: fn(x: &T) -> Box<[u8]>, deserializer: fn(x: &[u8]) -> T) -> Self {
-        Self { client, key, serializer, deserializer }
+impl<A, C: Deref<Target=A>, K: Borrow<[u8]>, T> List<A, C, K, T> where for<'a> &'a A: AsRedis {
+    pub fn new(client: C, key: K, serializer: fn(x: &T) -> Box<[u8]>, deserializer: fn(x: &[u8]) -> T) -> Self {
+        Self { client, key, serializer, deserializer, phantom: std::marker::PhantomData }
     }
 
-    fn initiate(&self, cmd: &[u8]) -> Session<A::P> {
-        self.client.clone().arg(cmd).apply(|x| x.arg(self.key.borrow()).ignore())
+    fn initiate(&self, cmd: &[u8]) -> Session<<&A as AsRedis>::P> {
+        self.client.arg(cmd).apply(|x| x.arg(self.key.borrow()).ignore())
     }
 
     pub fn clear(&self) -> Result<(), RedisError> {
@@ -144,13 +145,13 @@ impl<A: AsRedis + Clone, K: Borrow<[u8]>, T> List<A, K, T> {
 
 const BATCH_SIZE: usize = 12;
 
-pub struct ListIter<'l, A, K, T> {
+pub struct ListIter<'l, A, C, K, T> {
     buf: VecDeque<T>,
     index: usize,
-    list: &'l List<A, K, T>
+    list: &'l List<A, C, K, T>
 }
 
-impl<'l, A: AsRedis + Clone, K: Borrow<[u8]>, T> Iterator for ListIter<'l, A, K, T> {
+impl<'l, A, C: Deref<Target=A>, K: Borrow<[u8]>, T> Iterator for ListIter<'l, A, C, K, T> where for<'a> &'a A: AsRedis {
     type Item = T;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -171,9 +172,9 @@ impl<'l, A: AsRedis + Clone, K: Borrow<[u8]>, T> Iterator for ListIter<'l, A, K,
     }
 }
 
-impl<'l, A: AsRedis + Clone, K: Borrow<[u8]>, T> IntoIterator for &'l List<A, K, T> {
+impl<'l, A, C: Deref<Target=A>, K: Borrow<[u8]>, T> IntoIterator for &'l List<A, C, K, T> where for<'a> &'a A: AsRedis {
     type Item = T;
-    type IntoIter = ListIter<'l, A, K, T>;
+    type IntoIter = ListIter<'l, A, C, K, T>;
 
     fn into_iter(self) -> Self::IntoIter {
         ListIter { buf: VecDeque::with_capacity(BATCH_SIZE), index: 0, list: self }

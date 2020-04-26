@@ -3,7 +3,7 @@ use redis_alchemy::*;
 #[test]
 fn bitvec() {
     let client = TcpClient::new("127.0.0.1:6379");
-    let bitvec = BitVec::new(client, &b"bitvec"[..]);
+    let bitvec = BitVec::new(&client, &b"bitvec"[..]);
     assert!(bitvec.find_first().unwrap().is_none());
     bitvec.set(2, true).unwrap();
     assert_eq!(bitvec.get(1).unwrap(), false);

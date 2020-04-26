@@ -3,7 +3,7 @@ use redis_alchemy::*;
 #[test]
 fn map() {
     let client = TcpClient::new("127.0.0.1:6379");
-    let map = Map::new(client, &b"map"[..],
+    let map = Map::new(&client, &b"map"[..],
         |x: &String| x.as_bytes().into(), |x| String::from_utf8(x.to_vec()).unwrap(),
         |x: &i32| format!("{}", x).into_bytes().into(), |x| std::str::from_utf8(x).unwrap().parse().unwrap()
     );
@@ -25,7 +25,7 @@ fn map() {
 #[test]
 fn map_iter() {
     let client = TcpClient::new("127.0.0.1:6379");
-    let map = Map::new(client, &b"map_iter"[..],
+    let map = Map::new(&client, &b"map_iter"[..],
         |x: &String| x.as_bytes().into(), |x| String::from_utf8(x.to_vec()).unwrap(),
         |x: &i32| format!("{}", x).into_bytes().into(), |x| std::str::from_utf8(x).unwrap().parse().unwrap()
     );
